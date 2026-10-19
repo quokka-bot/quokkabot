@@ -33,6 +33,17 @@ it.each(["{", "null", JSON.stringify({ origin: "https://bot.example.com" })])("d
   expect(disk.keychain.has("connection")).toBe(false);
 });
 
+it("tells a request's sign-in from a newer one, so a late 401 cannot sign out the next session", async () => {
+  const { sameConnection } = await import("../src/connection");
+  const first = { origin: "https://bot.example.com", viewOrigin: "https://view.example.com", token: "a".repeat(43) };
+  expect(sameConnection(first, first)).toBe(true);
+  expect(sameConnection({ ...first }, first)).toBe(true);
+  expect(sameConnection({ ...first, token: "b".repeat(43) }, first)).toBe(false);
+  expect(sameConnection({ ...first, origin: "https://other.example.com" }, first)).toBe(false);
+  expect(sameConnection(null, first)).toBe(false);
+  expect(sameConnection(undefined, first)).toBe(false);
+});
+
 it("keeps a saved sign-in that reads", async () => {
   const connection = { origin: "https://bot.example.com", viewOrigin: "https://view.example.com", token: "t".repeat(43) };
   disk.keychain.set("connection", JSON.stringify(connection));

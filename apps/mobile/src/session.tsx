@@ -1,8 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { fetch } from "expo/fetch";
 import { useQueryClient } from "@tanstack/react-query";
 import { type Api, createApi, type Fetch } from "./api";
-import { clearConnection, type Connection, forgetIfReinstalled, loadConnection, saveConnection } from "./connection";
+import { clearConnection, type Connection, forgetIfReinstalled, loadConnection, sameConnection, saveConnection } from "./connection";
 
 export const appFetch: Fetch = (url, init) => fetch(url, init);
 
@@ -26,6 +26,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [connection, setConnection] = useState<Connection | null | undefined>(undefined);
   const [failure, setFailure] = useState<Error | null>(null);
   const [reason, setReason] = useState<string | null>(null);
+  const current = useRef(connection);
+  useEffect(() => { current.current = connection; }, [connection]);
   useEffect(() => {
     void forgetIfReinstalled().then(loadConnection).then(setConnection, (error: unknown) => setFailure(error instanceof Error ? error : new Error(String(error))));
   }, []);
@@ -42,7 +44,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setConnection(next);
   }, [client]);
   const api = useMemo(() => connection
-    ? createApi(appFetch, connection.origin, connection.token, () => { void signOut("This phone was signed out. Sign in again."); })
+    ? createApi(appFetch, connection.origin, connection.token, () => {
+      if (sameConnection(current.current, connection)) void signOut("This phone was signed out. Sign in again.");
+    })
     : null, [connection, signOut]);
   const session: SessionState = failure ? { state: "failed", error: failure }
     : connection === undefined ? { state: "loading" }

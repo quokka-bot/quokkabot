@@ -37,6 +37,12 @@ export async function loadConnection(): Promise<Connection | null> {
   return null;
 }
 
+// Whether `current` is still the sign-in `captured` was. A request made with an earlier sign-in can answer 401 after
+// the phone signed out and in again; only the current sign-in's answers may sign the phone out.
+export function sameConnection(current: Connection | null | undefined, captured: Connection): boolean {
+  return current?.origin === captured.origin && current.token === captured.token;
+}
+
 export async function saveConnection(connection: Connection): Promise<void> {
   await SecureStore.setItemAsync(KEY, JSON.stringify(Connection.parse(connection)), OPTIONS);
 }
