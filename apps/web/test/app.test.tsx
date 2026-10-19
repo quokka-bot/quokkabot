@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { REACTION_EMOJIS, type TaskEvent } from "@quokkabot/shared";
 import { App } from "../src/app.js";
-import { chatItems } from "../src/chat.js";
 import { api } from "../src/api.js";
 import { agent, agentId, at, detail, domainRequest, domainRequestId, emptyDomains, hash, json, me, ownerRequest, run, task, taskId } from "./fixtures.js";
 
@@ -583,33 +582,6 @@ it("keeps one answer per run and folds the agent's lines between tools into the 
   ]);
   fireEvent.click(steps);
   expect(screen.queryByRole("list")).toBeNull();
-});
-
-it("folds the line before a card, keeps the answer after it, and shows a run's last line when it ended on work", () => {
-  const events = [
-    { kind: "owner_message", text: "Check the stats", attachments: [] },
-    { kind: "run", run: { ...run, state: "starting" } },
-    { kind: "assistant_text", text: "Sending you the login form." },
-    { kind: "owner_request", request: { ...ownerRequest, kind: "login", site: "roblox.com", loginName: "Roblox" } },
-    { kind: "tool_call", tool: "request_login", summary: "request_login" },
-    { kind: "assistant_text", text: "I need your Roblox login." },
-    { kind: "run", run: { ...run, state: "exited" } },
-    { kind: "run", run: { ...run, state: "starting" } },
-    { kind: "assistant_text", text: "Signed in. Pulling the stats." },
-    { kind: "tool_call", tool: "browser_open", summary: "browser_open" },
-    { kind: "run", run: { ...run, state: "exited" } },
-  ] as const;
-  const items = chatItems(events.map((event, index) => ({ taskId: taskId as never, seq: index + 1, at, event: event as never })));
-  expect(items.map(item => item.kind === "agent" ? `agent: ${item.text}` : item.kind === "steps" ? `steps: ${item.lines.map(line => line.text).join(" | ")}` : item.kind))
-    .toEqual([
-      "owner",
-      "steps: Sending you the login form.",
-      "request",
-      "steps: request_login · request_login",
-      "agent: I need your Roblox login.",
-      "steps: browser_open · browser_open",
-      "agent: Signed in. Pulling the stats.",
-    ]);
 });
 
 describe("message reactions", () => {

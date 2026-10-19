@@ -38,6 +38,42 @@ export const AuthVerifyRequest = z.object({ response: z.unknown() }).strict();
 export const Me = z.object({ ownerName: z.string(), passkeys: z.number().int(), freshUntil: z.string().nullable() });
 export type Me = z.infer<typeof Me>;
 
+const CredentialDescriptor = z.object({
+  id: z.string().min(1), type: z.literal("public-key"),
+  transports: z.array(z.enum(["ble", "cable", "hybrid", "internal", "nfc", "smart-card", "usb"])).optional(),
+});
+const UserVerification = z.enum(["required", "preferred", "discouraged"]);
+const CredentialHints = z.array(z.enum(["hybrid", "security-key", "client-device"]));
+const AuthenticationExtensions = z.object({
+  appid: z.string().optional(), credProps: z.boolean().optional(), hmacCreateSecret: z.boolean().optional(),
+  minPinLength: z.boolean().optional(),
+}).passthrough();
+export const WebAuthnAuthenticationOptions = z.object({
+  challenge: z.string().min(1), timeout: z.number().positive().optional(), rpId: z.string().min(1).optional(),
+  allowCredentials: z.array(CredentialDescriptor).optional(), userVerification: UserVerification.optional(),
+  hints: CredentialHints.optional(), extensions: AuthenticationExtensions.optional(),
+}).passthrough();
+export const WebAuthnRegistrationOptions = z.object({
+  challenge: z.string().min(1), rp: z.object({ id: z.string().optional(), name: z.string() }),
+  user: z.object({ id: z.string().min(1), name: z.string(), displayName: z.string() }),
+  pubKeyCredParams: z.array(z.object({ type: z.literal("public-key"), alg: z.number().int() })).min(1),
+  timeout: z.number().positive().optional(), excludeCredentials: z.array(CredentialDescriptor).optional(),
+  authenticatorSelection: z.object({
+    authenticatorAttachment: z.enum(["platform", "cross-platform"]).optional(),
+    requireResidentKey: z.boolean().optional(), residentKey: z.enum(["required", "preferred", "discouraged"]).optional(),
+    userVerification: UserVerification.optional(),
+  }).optional(), attestation: z.enum(["none", "direct", "indirect", "enterprise"]).optional(),
+  hints: CredentialHints.optional(), extensions: AuthenticationExtensions.optional(),
+  attestationFormats: z.array(z.enum(["fido-u2f", "packed", "android-safetynet", "android-key", "tpm", "apple", "none"])).optional(),
+}).passthrough();
+export type WebAuthnAuthenticationOptions = z.infer<typeof WebAuthnAuthenticationOptions>;
+export type WebAuthnRegistrationOptions = z.infer<typeof WebAuthnRegistrationOptions>;
+
+export const FreshAuth = z.object({ freshUntil: z.string().datetime({ offset: true }) });
+export const EmptyResponse = z.union([z.null(), z.object({}).strict()]);
+export type FreshAuth = z.infer<typeof FreshAuth>;
+export type EmptyResponse = z.infer<typeof EmptyResponse>;
+
 // --- Agents and their computer -------------------------------------------------------------------------------
 export const ComputerView = z.object({
   state: z.enum(["stopped", "starting", "running", "stopping", "killed", "degraded"]),
@@ -108,6 +144,9 @@ export const ReplyRequest = z.object({ text: z.string().max(20_000), attachmentI
   .refine(value => value.text.trim().length > 0 || value.attachmentIds.length > 0, "Write a message or attach an image.");
 export const TakeoverDoneRequest = z.object({ note: z.string().max(2000).default("") }).strict();
 
+export const TaskPage = z.object({ tasks: z.array(Task), nextBefore: z.string().nullable() });
+export type TaskPage = z.infer<typeof TaskPage>;
+
 export const TaskDetail = z.object({
   task: Task,
   runs: z.array(Run),
@@ -153,6 +192,15 @@ export const FileListing = z.object({
   nextCursor: z.string().nullable(),
 });
 export type FileListing = z.infer<typeof FileListing>;
+
+export const SafeFileListing = FileListing.superRefine((listing, context) => {
+  for (const [index, entry] of listing.entries.entries()) {
+    if (!RelPath.safeParse(entry.path).success) {
+      context.addIssue({ code: "custom", path: ["entries", index, "path"], message: "expected a path inside the file root" });
+    }
+  }
+});
+export type SafeFileListing = z.infer<typeof SafeFileListing>;
 
 // --- Domains ---------------------------------------------------------------------------------------------------
 // GET    /api/agents/:agentId/domains               -> DomainsView
@@ -206,6 +254,12 @@ export const AuditPage = z.object({
 });
 export type AuditPage = z.infer<typeof AuditPage>;
 
+export const AuditVerification = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), count: z.number().int().nonnegative(), head: z.string().regex(/^[0-9a-f]{64}$/) }),
+  z.object({ ok: z.literal(false), count: z.number().int().nonnegative(), failedAtSeq: z.number().int(), reason: z.string() }),
+]);
+export type AuditVerification = z.infer<typeof AuditVerification>;
+
 // --- Waiting on the owner (home screen) ---------------------------------------------------------------------------
 // GET /api/inbox -> { items: InboxItem[] }
 export const InboxItem = z.discriminatedUnion("kind", [
@@ -213,6 +267,9 @@ export const InboxItem = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("domain_request"), agentId: AgentId, taskTitle: z.string().nullable(), request: DomainRequestView }),
 ]);
 export type InboxItem = z.infer<typeof InboxItem>;
+export const InboxResponse = z.object({ items: z.array(InboxItem) });
+export type InboxResponse = z.infer<typeof InboxResponse>;
+
 export { OwnerRequestId };
 
 // --- Desktop app ---------------------------------------------------------------------------------------------------

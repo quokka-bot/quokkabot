@@ -8,6 +8,7 @@
     ".": {
       "types": "./src/index.ts",
       "development": "./src/index.ts",
+      "react-native": "./src/index.ts",
       "default": "./dist/index.js"
     },
     "./node": {

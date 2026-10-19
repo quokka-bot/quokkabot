@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { hostMatchesPattern, siteLabel, type DomainRequestView, type LoginView, type OwnerRequest } from "@quokkabot/shared";
+import type { DomainRequestView, LoginView, OwnerRequest } from "@quokkabot/shared";
+import { listSites, loginRequestOptions } from "@quokkabot/client";
 import { api } from "./api.js";
 import { GmailIcon, openConnectTab, startGmailIn, useConnectGmail } from "./apps.js";
 import { LoginForm } from "./logins.js";
@@ -65,13 +66,7 @@ function LoginRequestCard({ request, agentId, onResolved }: { request: OwnerRequ
     await api.takeover(agentId, "take");
     void navigate(`/agents/${agentId}/computer`);
   });
-  const title = request.loginId === null ? `Sign in to ${request.site ?? "a site"}` : `Fix the ${request.loginName ?? "saved"} login`;
-  // A saved login the agent needs on a site it does not cover yet, such as a shared sign-in page: one click adds the site.
-  const otherSite = existing !== undefined && request.site !== null && !existing.sites.some((pattern) => hostMatchesPattern(request.site ?? "", pattern));
-  // Gmail: no password here. Gmail is connected through Google's own page and the agent works through the Gmail API.
-  // Only for Gmail itself: a Google sign-in for Drive or for another site's "Sign in with Google" keeps the login card.
-  const site = request.site ?? "";
-  const google = /(^|\.)(mail\.google\.com|gmail\.com)$/.test(site) || (site === "accounts.google.com" && /\b(g?mail|inbox|draft|email)\b/i.test(`${request.text} ${request.loginName ?? ""}`));
+  const { title, otherSite, google } = loginRequestOptions(request, existing);
   const connectInstead = useAction(async (tab: Window | null) => {
     // Start the connection first; the agent is told only once Google's page is on its way.
     await startGmailIn(agentId, tab);
@@ -87,7 +82,7 @@ function LoginRequestCard({ request, agentId, onResolved }: { request: OwnerRequ
     <p className="plain action-reason">{request.text}</p>
     <ErrorLine error={connectInstead.error} />
   </article>;
-  if (otherSite && request.site !== null) {
+  if (otherSite && existing !== undefined && request.site !== null) {
     return <AllowLoginCard login={existing} site={request.site} onResolved={onResolved} signInMyself={() => myself.mutate()} signingIn={myself.isPending} signInError={myself.error} />;
   }
   return <article className="action-card">
@@ -129,12 +124,6 @@ function AllowLoginCard({ login, site, onResolved, signInMyself, signingIn, sign
     </div>
     <ErrorLine error={allow.error ?? signInError} />
   </article>;
-}
-
-/** "roblox.com, rbxcdn.com and arkoselabs.com" */
-export function listSites(patterns: readonly string[]): string {
-  const sites = patterns.map(siteLabel);
-  return sites.length <= 1 ? sites.join("") : `${sites.slice(0, -1).join(", ")} and ${sites.at(-1)}`;
 }
 
 export function DomainRequestCard({ request }: { request: DomainRequestView }) {

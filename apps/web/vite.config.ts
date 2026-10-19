@@ -20,7 +20,10 @@ function versionFile(): Plugin {
 export default defineConfig({
   plugins: [react(), versionFile()],
   resolve: {
-    alias: { "@quokkabot/shared": fileURLToPath(new URL("../../packages/shared/src/index.ts", import.meta.url)) },
+    alias: {
+      "@quokkabot/client": fileURLToPath(new URL("../../packages/client/src/index.ts", import.meta.url)),
+      "@quokkabot/shared": fileURLToPath(new URL("../../packages/shared/src/index.ts", import.meta.url)),
+    },
   },
   // Every asset is a file: the CSP allows fonts and images from this origin only, never data: URLs.
   build: { target: "es2024", assetsInlineLimit: 0 },

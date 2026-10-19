@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { ReactionEmoji, TaskEventEnvelope } from "@quokkabot/shared";
-import { api, errorMessage, parseTaskEvent, taskEventsUrl } from "./api.js";
+import type { TaskEventEnvelope } from "@quokkabot/shared";
+import { streamRows, TaskEventSequencer } from "@quokkabot/client";
+import { api, taskEventsUrl } from "./api.js";
 import { ErrorLine } from "./ui.js";
 
 export function useTaskStream(taskId: string) {
@@ -10,12 +11,8 @@ export function useTaskStream(taskId: string) {
   const [error, setError] = useState<unknown>(null);
   const [connection, setConnection] = useState("Connecting");
   const [revision, setRevision] = useState(0);
-  const lastSeq = useRef(0);
-  const currentTask = useRef(taskId);
-  if (currentTask.current !== taskId) {
-    currentTask.current = taskId;
-    lastSeq.current = 0;
-  }
+  const sequencer = useRef(new TaskEventSequencer(taskId));
+  if (sequencer.current.taskId !== taskId) sequencer.current = new TaskEventSequencer(taskId);
   // Stream failures in a row since the last open; the first one is retried quietly.
   const failures = useRef(0);
   useEffect(() => {
@@ -26,17 +23,14 @@ export function useTaskStream(taskId: string) {
   useEffect(() => {
     let alive = true;
     let retry: ReturnType<typeof setTimeout> | undefined;
-    const source = new EventSource(taskEventsUrl(taskId, lastSeq.current));
+    const sequence = sequencer.current;
+    const source = new EventSource(taskEventsUrl(taskId, sequence.lastSeq));
     setConnection("Connecting");
     source.onopen = () => { failures.current = 0; setConnection("Live"); setError(null); };
     source.onmessage = message => {
       try {
-        const envelope = parseTaskEvent(message.data as string);
-        if (envelope.taskId !== taskId) throw new Error("Task event: task id does not match the open task");
-        if (message.lastEventId !== String(envelope.seq)) throw new Error("Task event: SSE id does not match the event sequence");
-        if (envelope.seq <= lastSeq.current) return;
-        if (envelope.seq !== lastSeq.current + 1) throw new Error(`Task event: expected sequence ${lastSeq.current + 1}, received ${envelope.seq}`);
-        lastSeq.current = envelope.seq;
+        const envelope = sequence.accept(message.lastEventId, message.data as string);
+        if (envelope === null) return;
         setEvents(previous => [...previous, envelope]);
         if (["state", "run", "owner_request"].includes(envelope.event.kind)) {
           void client.invalidateQueries({ queryKey: ["task", taskId] });
@@ -63,47 +57,7 @@ export function useTaskStream(taskId: string) {
     };
     return () => { alive = false; clearTimeout(retry); source.close(); };
   }, [taskId, client, revision]);
-  return { events, error, connection, lastSeq: lastSeq.current, reconnect: () => { failures.current = 0; setRevision(value => value + 1); } };
-}
-
-type StreamRow = { key: number; kind: "text"; text: string; live: boolean; finalSeq: number | null } | { key: number; kind: "event"; envelope: TaskEventEnvelope };
-
-export function messageReactions(events: readonly TaskEventEnvelope[]): Map<number, Partial<Record<"owner" | "agent", ReactionEmoji>>> {
-  const reactions = new Map<number, Partial<Record<"owner" | "agent", ReactionEmoji>>>();
-  for (const { event } of events) {
-    if (event.kind !== "reaction") continue;
-    const current = reactions.get(event.targetSeq) ?? {};
-    if (event.emoji === null) delete current[event.by];
-    else current[event.by] = event.emoji;
-    reactions.set(event.targetSeq, current);
-  }
-  return reactions;
-}
-
-export function streamRows(events: readonly TaskEventEnvelope[]): StreamRow[] {
-  const rows: StreamRow[] = [];
-  let liveIndex: number | null = null;
-  for (const envelope of events) {
-    const event = envelope.event;
-    if (event.kind === "assistant_delta") {
-      const pending = liveIndex === null ? undefined : rows[liveIndex];
-      if (pending?.kind === "text") pending.text += event.text;
-      else {
-        liveIndex = rows.length;
-        rows.push({ key: envelope.seq, kind: "text", text: event.text, live: true, finalSeq: null });
-      }
-    } else if (event.kind === "assistant_text") {
-      const pending = liveIndex === null ? undefined : rows[liveIndex];
-      // Keep the draft's React key, but reactions must target the persisted final event.
-      if (pending?.kind === "text") { pending.text = event.text; pending.live = false; pending.finalSeq = envelope.seq; }
-      else rows.push({ key: envelope.seq, kind: "text", text: event.text, live: false, finalSeq: envelope.seq });
-      liveIndex = null;
-    } else {
-      rows.push({ key: envelope.seq, kind: "event", envelope });
-      if (event.kind === "run") liveIndex = null;
-    }
-  }
-  return rows;
+  return { events, error, connection, lastSeq: sequencer.current.lastSeq, reconnect: () => { failures.current = 0; setRevision(value => value + 1); } };
 }
 
 export function TaskEventStream({ taskId, agentId, openRequestIds, stream }: {

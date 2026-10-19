@@ -18,6 +18,7 @@ ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true
 WORKDIR /src
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
+COPY packages/client/package.json packages/client/
 COPY apps/browser-service/package.json apps/browser-service/
 COPY apps/control/package.json apps/control/
 COPY apps/egress/package.json apps/egress/
