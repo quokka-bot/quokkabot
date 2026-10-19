@@ -26,10 +26,11 @@ export function DesktopLink() {
     if (!code) throw new Error("Desktop link code is missing");
     return api.desktopLink(code);
   }, enabled: prepared && valid && !!me.data && !done });
-  // Kept after approval, when the pending query stops, so the done line still names the right app.
-  const [app, setApp] = useState<"desktop" | "phone">("desktop");
+  // Unknown until the request loads. Kept after approval, when the pending query stops, so the done line still names
+  // the right app.
+  const [app, setApp] = useState<"desktop" | "phone" | null>(null);
   useEffect(() => { if (pending.data) setApp(pending.data.client); }, [pending.data]);
-  const appName = app === "phone" ? "iPhone app" : "desktop app";
+  const appName = app === "phone" ? "iPhone app" : app === "desktop" ? "desktop app" : "app";
   const decide = useAction(async (decision: "approve" | "refuse") => {
     if (!code) throw new Error("Desktop link code is missing");
     if (decision === "approve") {
@@ -45,10 +46,10 @@ export function DesktopLink() {
   });
   return <div className="auth-card">
     <AgentAvatar index={0} size={64} />
-    <h1>{app === "phone" ? "Connect the iPhone app" : "Connect the desktop app"}</h1>
+    <h1>{app === null ? "Connect an app" : `Connect the ${appName}`}</h1>
     {done ? <p role="status">{done === "approved" ? `Approved. Return to the ${appName}.` : "Refused."}</p> : !valid ? <ErrorLine error={new Error("This code is missing or invalid. Start again in the app.")} /> : <>
       <ErrorLine error={me.error} /><ErrorLine error={pending.error} />
-      {!pending.data && !me.error && !pending.error && <p role="status">Checking desktop request…</p>}
+      {!pending.data && !me.error && !pending.error && <p role="status">Checking the request…</p>}
       {pending.data && <>
         <p><strong>{pending.data.deviceName}</strong> wants to {pending.data.kind === "signin" ? "sign in" : "confirm an action"}.</p>
         <p className="link-code">{code}</p><p>Only approve if the {appName} shows the same code</p>

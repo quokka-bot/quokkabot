@@ -183,6 +183,7 @@ describe("browser desktop-link page", () => {
     vi.mocked(startAuthentication).mockResolvedValue(assertion as Awaited<ReturnType<typeof startAuthentication>>);
     mount("/link"); await screen.findByText("Office Mac");
     expect(window.location.hash).toBe(""); expect(sessionStorage.getItem("quokkabot:desktop-link-code")).toBe(code);
+    expect(screen.getByRole("heading", { name: "Connect the desktop app" })).toBeTruthy();
     expect(screen.getByText("Only approve if the desktop app shows the same code")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await screen.findByText("Approved. Return to the desktop app.");
@@ -232,7 +233,11 @@ describe("browser desktop-link page", () => {
     window.history.replaceState({}, "", `/link#${code}`);
     handler = path => path.includes("/desktop-link/pending?") ? json({ kind: "signin", client: "phone", deviceName: "Owner's iPhone", createdAt: at, expiresAt: flow.expiresAt }) : undefined;
     vi.mocked(startAuthentication).mockResolvedValue({ id: "passkey-assertion" } as Awaited<ReturnType<typeof startAuthentication>>);
-    mount("/link"); await screen.findByText("Owner's iPhone");
+    mount("/link");
+    // Until the request loads, the page names no app.
+    expect(screen.getByRole("heading", { name: "Connect an app" })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Checking the request…");
+    await screen.findByText("Owner's iPhone");
     expect(screen.getByRole("heading", { name: "Connect the iPhone app" })).toBeTruthy();
     expect(screen.getByText("Only approve if the iPhone app shows the same code")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
