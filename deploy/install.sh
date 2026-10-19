@@ -379,7 +379,9 @@ load_settings() {
   # Group of the Docker socket as containers see it (the supervisor joins it).
   DOCKER_GID=$(docker run --rm --network none -v /var/run/docker.sock:/var/run/docker.sock:ro \
     caddy:2.11.7@sha256:685ae3d7c34d9b5f8caeddc5d14051db7bbd88ff1f5a2fa0c16bd8ca328fb7af stat -c %g /var/run/docker.sock)
-  [[ "$DOCKER_GID" =~ ^[0-9]+$ && "$DOCKER_GID" != 0 ]] || die "the Docker socket's group is '$DOCKER_GID'; it must be a non-root group"
+  [[ "$DOCKER_GID" =~ ^[0-9]+$ ]] || die "could not read the Docker socket's group (found '$DOCKER_GID')"
+  # OrbStack hands containers a socket owned by root:root; only a Mac's development VM may run that way.
+  [[ "$DOCKER_GID" != 0 || "$MODE" == dev ]] || die "the Docker socket's group is root; it must be a non-root group"
   note "app $APP_ORIGIN, viewer $VIEW_ORIGIN, $QUOKKABOT_AGENTS agent slots, Docker socket group $DOCKER_GID"
 }
 
@@ -425,7 +427,7 @@ EOF
   for ((index = 1; index <= QUOKKABOT_AGENTS; index++)); do
     echo "QUOKKABOT_AGENT_${index}_ID=${AGENT_IDS[index - 1]}" >>"$ENV_FILE.tmp"
   done
-  for entry in "${KEPT_AGENT_IDS[@]}"; do
+  for entry in ${KEPT_AGENT_IDS[@]+"${KEPT_AGENT_IDS[@]}"}; do
     echo "QUOKKABOT_AGENT_${entry%%=*}_ID=${entry#*=}" >>"$ENV_FILE.tmp"
   done
   if [[ -n "$QUOKKABOT_PUBLIC_CONTACT" ]]; then
@@ -550,7 +552,7 @@ make_data_dirs() {
 # sandboxes are removed; their data stays and the next computer start recreates them.
 check_hidden_slots() {
   local entry index name running
-  for entry in "${KEPT_AGENT_IDS[@]}"; do
+  for entry in ${KEPT_AGENT_IDS[@]+"${KEPT_AGENT_IDS[@]}"}; do
     index=${entry%%=*}
     for name in cli tools browser; do
       running=$(docker inspect --format '{{.State.Running}}' "qb-$name-$index" 2>/dev/null || true)
@@ -790,13 +792,13 @@ start_stack() {
   log "Starting the stack"
   # Existing containers whose config file changed are restarted after `up`, unless `up` replaced them anyway.
   local service before=() restart=() recreate=()
-  for service in "${CHANGED_SERVICES[@]}"; do
+  for service in ${CHANGED_SERVICES[@]+"${CHANGED_SERVICES[@]}"}; do
     before+=("$service=$(compose ps --all --quiet "$service" 2>/dev/null || true)")
   done
   compose up --detach --remove-orphans --wait --wait-timeout 180 2>&1 | sed 's/^/    /' ||
     die "the stack did not come up; see: $COMPOSE_WRAPPER ps and $COMPOSE_WRAPPER logs"
   local entry previous
-  for entry in "${before[@]}"; do
+  for entry in ${before[@]+"${before[@]}"}; do
     service=${entry%%=*}
     previous=${entry#*=}
     if [[ -n "$previous" && "$previous" == "$(compose ps --all --quiet "$service")" ]]; then
@@ -816,8 +818,8 @@ start_stack() {
     note "recreating ${recreate[*]} on the new image"
     compose up --detach --no-deps --force-recreate --wait --wait-timeout 180 "${recreate[@]}" 2>&1 | sed 's/^/    /'
   fi
-  for service in "${restart[@]}"; do
-    [[ " ${recreate[*]} " != *" $service "* ]] || continue
+  for service in ${restart[@]+"${restart[@]}"}; do
+    [[ " ${recreate[*]+"${recreate[*]}"} " != *" $service "* ]] || continue
     note "restarting $service for its changed configuration"
     compose restart "$service" >/dev/null
   done
