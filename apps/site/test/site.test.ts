@@ -2,10 +2,11 @@
 // that names everyone the software sends data to.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { MAC_DOWNLOAD, OPERATOR, SUPPORT_EMAIL } from "../src/lib/site";
+import { MAC_DOWNLOAD, OPERATOR, SUPPORT_EMAIL, publicPath } from "../src/lib/site";
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const read = (path: string) => readFileSync(join(root, path), "utf8");
 
 function files(dir: string, pattern: RegExp): string[] {
@@ -71,4 +72,11 @@ describe("privacy page", () => {
     expect(OPERATOR.name.length).toBeGreaterThan(0);
     expect(SUPPORT_EMAIL).toMatch(/@quokkabot\.com$/);
   });
+});
+
+it("uses the public path in canonical URLs, not the built file name", () => {
+  expect(publicPath("/index.html")).toBe("/");
+  expect(publicPath("/index")).toBe("/");
+  expect(publicPath("/privacy.html")).toBe("/privacy");
+  expect(publicPath("/support")).toBe("/support");
 });

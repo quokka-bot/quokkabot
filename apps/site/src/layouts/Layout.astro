@@ -1,6 +1,6 @@
 ---
 import "../styles/site.css";
-import { GITHUB_URL } from "../lib/site";
+import { GITHUB_URL, publicPath } from "../lib/site";
 
 interface Props {
   title: string;
@@ -9,7 +9,7 @@ interface Props {
 }
 
 const { title, description, pageClass } = Astro.props;
-const canonical = new URL(Astro.url.pathname === "/index" ? "/" : Astro.url.pathname, Astro.site);
+const canonical = new URL(publicPath(Astro.url.pathname), Astro.site);
 ---
 
 <!doctype html>
