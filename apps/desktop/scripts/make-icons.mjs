@@ -2,9 +2,10 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 
-const build = new URL("../build/", import.meta.url).pathname;
+const build = fileURLToPath(new URL("../build/", import.meta.url));
 const iconset = join(build, "icon.iconset");
 rmSync(iconset, { recursive: true, force: true });
 mkdirSync(iconset);

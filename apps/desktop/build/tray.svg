@@ -1,16 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- The quokka's head as a menu-bar template: black shape, eyes and nose cut out. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="222 192 580 580">
+  <!-- The KcalSnap mark as a menu-bar template: black brow and visor, eyes cut out. -->
   <defs>
-    <mask id="face">
-      <rect width="64" height="64" fill="#fff"/>
-      <circle cx="23.5" cy="33" r="4.6" fill="#000"/>
-      <circle cx="40.5" cy="33" r="4.6" fill="#000"/>
-      <path d="M27.6 40.2q4.4-2.2 8.8 0q-1.4 4-4.4 4.6q-3-.6-4.4-4.6z" fill="#000"/>
+    <mask id="eyes">
+      <rect x="222" y="192" width="580" height="580" fill="#fff"/>
+      <ellipse cx="452" cy="552" rx="42" ry="75" fill="#000"/>
+      <ellipse cx="662" cy="552" rx="42" ry="75" fill="#000"/>
     </mask>
   </defs>
-  <g mask="url(#face)">
-    <circle cx="16.5" cy="15.5" r="8.5"/>
-    <circle cx="47.5" cy="15.5" r="8.5"/>
-    <ellipse cx="32" cy="37" rx="24" ry="21.5"/>
-  </g>
+  <rect x="279.375" y="290.5" width="470" height="66" rx="33" transform="rotate(-7 514.375 323.5)"/>
+  <rect x="232" y="402" width="560" height="300" rx="118" mask="url(#eyes)"/>
 </svg>
