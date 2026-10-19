@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+    <title>Connect to Quokka Bot</title>
+    <link rel="stylesheet" href="connect.css">
+    <script src="connect.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <svg class="logo" width="56" height="56" viewBox="0 0 64 64" aria-hidden="true"><path fill="#8b5cf6" d="M10 30c0-13 10-22 24-22 13 0 22 8 22 19 0 14-11 27-27 27C17 54 10 44 10 30z" transform="rotate(-12 32 32)"/><ellipse cx="27" cy="27" rx="3.2" ry="5" fill="#fff" transform="rotate(-12 27 27)"/><ellipse cx="38" cy="25" rx="3.2" ry="5" fill="#fff" transform="rotate(-12 38 25)"/></svg>
+      <h1>Your agents, on your server.</h1>
+      <p>Enter your Quokka Bot server address to connect.</p>
+      <form id="connect-form">
+        <label for="server-origin">Server address</label>
+        <input id="server-origin" name="server" type="url" placeholder="https://quokkabot.example.com" required autocomplete="url" spellcheck="false" autofocus>
+        <button id="connect-button" type="submit">Connect</button>
+        <p id="error" role="alert" aria-live="polite"></p>
+      </form>
+      <small id="version"></small>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in Quokka Bot does not work as it should.
+labels: [bug]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Chat and cards
+        - The agent's computer (browser, sandboxes, live view)
+        - Logins and the vault
+        - Gmail
+        - Mac app
+        - Install, backups and upgrades
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you saw instead. Screenshots help.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send
+      options:
+        - label: I removed passwords, tokens and personal data from this report.
+          required: true
+        - label: This is not a security vulnerability (those go through SECURITY.md).
+          required: true

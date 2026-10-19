@@ -1,0 +1,9 @@
+# Development override for OrbStack or Docker Desktop on a Mac. Used by `deploy/install.sh --dev`, which also
+# writes the configs with runtime "runc" for the sandboxes, data under deploy/.dev and origins on *.localhost.
+# Plain http: browsers treat http://*.localhost as a secure context, which the Selkies viewer needs.
+services:
+  caddy:
+    ports: !override
+      - "127.0.0.1:${QUOKKABOT_DEV_PORT:-8080}:80"
+    volumes:
+      - ./Caddyfile.dev:/etc/caddy/Caddyfile:ro

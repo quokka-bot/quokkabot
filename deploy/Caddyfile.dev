@@ -1,0 +1,13 @@
+# Development: plain http on *.localhost names, published on 127.0.0.1:<QUOKKABOT_DEV_PORT>.
+{
+	auto_https off
+	servers {
+		protocols h1 h2c
+	}
+}
+
+http://{$QUOKKABOT_DOMAIN}, http://{$QUOKKABOT_VIEW_DOMAIN} {
+	reverse_proxy 10.230.0.3:8080 {
+		header_up Host {hostport}
+	}
+}

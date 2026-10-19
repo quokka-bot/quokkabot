@@ -1,0 +1,10 @@
+packages:
+  - packages/*
+  - apps/*
+minimumReleaseAgeExclude:
+  - electron@44.9.0
+allowBuilds:
+  electron: true
+  esbuild: true
+  sharp: true
+  electron-winstaller: false

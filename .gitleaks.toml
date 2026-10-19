@@ -1,0 +1,7 @@
+# Secret scanning (gitleaks). Default rules, plus the public test values the tests use on purpose.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "RFC 6238 TOTP test secret and the RFC 6455 sample WebSocket key"
+regexes = ['''^GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ$''', '''^dGhlIHNhbXBsZSBub25jZQ==$''']

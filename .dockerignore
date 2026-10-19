@@ -1,0 +1,16 @@
+# Image builds use the repository root as context. Keep it small and free of private or generated files.
+.git
+.github
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+**/.DS_Store
+private
+docs
+deploy
+**/.env
+**/.env.*
+.vscode
+.idea
+.claude

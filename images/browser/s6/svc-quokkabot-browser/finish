@@ -1,0 +1,7 @@
+#!/bin/bash
+# s6 restarts a longrun when it exits. Exit 125 tells s6-supervise to stop retrying: used when the image was built
+# without the browser service, so the log shows the reason once instead of once a second.
+if [[ ! -f /opt/quokkabot/browser-service/dist/main.js ]]; then
+  exit 125
+fi
+exit 0

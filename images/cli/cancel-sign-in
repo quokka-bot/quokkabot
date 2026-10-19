@@ -1,0 +1,17 @@
+#!/bin/bash
+set -euo pipefail
+[[ -f /tmp/quokkabot-sign-in ]] || exit 0
+read -r sign_in_id </tmp/quokkabot-sign-in
+# sign-in-cli writes its id before run-cli records the process group. Wait through that short startup gap.
+for ((attempt = 0; attempt < 25; attempt++)); do
+  if /opt/quokkabot/bin/cancel-cli "$sign_in_id"; then
+    rm /tmp/quokkabot-sign-in
+    exit 0
+  else
+    result=$?
+    [[ "$result" -eq 3 ]] || exit "$result"
+  fi
+  sleep 0.2
+done
+# Keep the record and refuse to free the slot when the group cannot be accounted for.
+exit 3

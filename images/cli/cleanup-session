@@ -1,0 +1,53 @@
+#!/bin/bash
+# cleanup-session <sessionId>
+#
+# Deletes one session's files from the CLI's private home after the task ends: the transcript
+# (projects/<project>/<id>.jsonl), its tool-result and subagent directory (projects/<project>/<id>/) and every other
+# entry Claude Code keys by the session id (session-env/<id>, todos/<id>-*.json, file-history/<id>, debug/<id>.txt
+# and the like), plus the sessions/<pid>.json process registry entries that name this session. Only entries whose
+# name is the id, or starts with "<id>." or "<id>-", and those registry entries are removed. The sign-in
+# (.credentials.json) and everything else stay; this script never opens the credential file. Symlinks are removed as
+# links, never followed.
+set -euo pipefail
+
+readonly CLAUDE_DIR=/home/claude/.claude
+readonly CREDENTIALS="$CLAUDE_DIR/.credentials.json"
+readonly UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+die() {
+  echo "cleanup-session: $1" >&2
+  exit "$2"
+}
+
+[[ $# -eq 1 ]] || die "usage: cleanup-session <sessionId>" 2
+session_id=$1
+[[ "$session_id" =~ $UUID_RE ]] || die "session id must be a lowercase UUID" 2
+
+if [[ ! -d "$CLAUDE_DIR" ]]; then
+  echo "cleanup-session: $CLAUDE_DIR does not exist; nothing to remove"
+  exit 0
+fi
+
+mapfile -d '' targets < <(
+  find "$CLAUDE_DIR" -xdev -mindepth 1 \
+    \( -name "$session_id" -o -name "$session_id.*" -o -name "$session_id-*" \) \
+    -prune -print0
+)
+
+# sessions/<pid>.json registers a running CLI process with its session id; a killed process leaves it behind.
+if [[ -d "$CLAUDE_DIR/sessions" ]]; then
+  mapfile -d '' registry < <(
+    find "$CLAUDE_DIR/sessions" -xdev -mindepth 1 -maxdepth 1 -type f -name '*.json' \
+      -exec grep -lZF "\"sessionId\":\"$session_id\"" {} +
+  )
+  targets+=("${registry[@]}")
+fi
+
+removed=0
+for target in "${targets[@]}"; do
+  [[ "$target" != "$CREDENTIALS" ]] || die "refusing to remove $CREDENTIALS" 1
+  rm -rf -- "$target"
+  removed=$((removed + 1))
+done
+
+echo "cleanup-session: removed $removed entries for session $session_id"

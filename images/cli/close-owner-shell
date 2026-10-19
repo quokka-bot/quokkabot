@@ -1,0 +1,21 @@
+#!/bin/bash
+# close-owner-shell: kills every process in the session owner-shell recorded. Exits 0 when no owner shell is open.
+set -euo pipefail
+file=/tmp/quokkabot/owner-shell.sid
+[ -f "$file" ] || exit 0
+sid=$(<"$file")
+[[ "$sid" =~ ^[0-9]+$ ]] || {
+  echo "bad session id" >&2
+  exit 1
+}
+[ "$sid" != 1 ] || {
+  echo "refusing session 1" >&2
+  exit 1
+}
+for p in /proc/[0-9]*; do
+  stat=$(<"$p/stat") 2>/dev/null || continue
+  rest=${stat##*) }
+  read -r _s _pp _pg s _ <<<"$rest"
+  if [ "$s" = "$sid" ]; then kill -KILL "${p#/proc/}" 2>/dev/null || true; fi
+done
+rm -f "$file"

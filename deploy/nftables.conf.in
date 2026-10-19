@@ -1,0 +1,41 @@
+#!/usr/sbin/nft -f
+# Quokka Bot host firewall. install.sh renders this into /etc/quokkabot/nftables.conf, and quokkabot-firewall.service
+# loads it at boot before Docker starts. It lives in its own table, so it works next to Docker's rules with either
+# firewall backend (iptables-nft or nftables): a packet dropped here is dropped whatever other tables say.
+#
+# Sandbox bridges (qbc<N> for CLI networks, qbb<N> for browser networks) and their subnets:
+#   - never reach the host itself (sshd, Docker's published ports, anything listening on any host address);
+#   - are never routed anywhere: traffic stays inside each internal network, between the sandbox, the egress
+#     proxy and the control plane, which are attached to it directly.
+
+table inet quokkabot
+delete table inet quokkabot
+
+table inet quokkabot {
+	set sandbox_ifaces {
+		type ifname
+		elements = { @SANDBOX_IFACES@ }
+	}
+
+	set sandbox_v4 {
+		type ipv4_addr
+		flags interval
+		elements = { @SANDBOX_SUBNETS@ }
+	}
+
+	chain input {
+		type filter hook input priority filter - 10; policy accept;
+		iifname @sandbox_ifaces counter drop comment "sandbox bridge to host"
+		ip saddr @sandbox_v4 counter drop comment "sandbox address to host"
+	}
+
+	chain forward {
+		type filter hook forward priority filter - 10; policy accept;
+		# Only seen when br_netfilter is loaded: bridged traffic inside one network stays allowed.
+@SAME_BRIDGE_ACCEPT@
+		iifname @sandbox_ifaces counter drop comment "routed out of a sandbox bridge"
+		oifname @sandbox_ifaces counter drop comment "routed into a sandbox bridge"
+		ip saddr @sandbox_v4 counter drop comment "routed from a sandbox address"
+		ip daddr @sandbox_v4 counter drop comment "routed to a sandbox address"
+	}
+}

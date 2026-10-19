@@ -1,0 +1,11 @@
+#!/bin/bash
+# owner-shell: the owner's sign-in terminal (docker exec with a TTY). Closing the exec stream does not hang up the
+# shell, so this records the shell's session id; close-owner-shell kills that session later.
+set -euo pipefail
+umask 077
+stat=$(</proc/$$/stat)
+rest=${stat##*) }
+read -r _state _ppid _pgrp sid _ <<<"$rest"
+mkdir -p /tmp/quokkabot
+echo "$sid" >/tmp/quokkabot/owner-shell.sid
+exec /bin/bash -l

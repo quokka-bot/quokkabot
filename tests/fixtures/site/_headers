@@ -1,0 +1,6 @@
+/attach.pdf
+  Content-Disposition: attachment; filename="invoice-1002.pdf"
+/inline.pdf
+  Content-Disposition: inline; filename="invoice-1003.pdf"
+/*
+  X-Robots-Tag: noindex

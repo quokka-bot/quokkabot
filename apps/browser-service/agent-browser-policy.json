@@ -1,0 +1,9 @@
+{
+  "default": "deny",
+  "allow": [
+    "launch", "navigate", "tab_list", "tab_new", "tab_switch", "tab_close",
+    "snapshot", "getattribute", "focus", "click", "fill", "type", "select", "check", "uncheck", "press",
+    "scroll", "wait", "waitfortext", "waitforurl", "waitforloadstate",
+    "back", "forward", "reload", "screenshot", "stream_disable", "stream_status"
+  ]
+}

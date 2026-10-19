@@ -1,0 +1,20 @@
+# CodeRabbit review settings.
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  path_filters:
+    - "!pnpm-lock.yaml"
+    - "!packages/shared/src/public-suffix-rules.json"
+  path_instructions:
+    - path: "apps/{control,supervisor,browser-service,egress}/**"
+      instructions: >-
+        Security boundary code. Check that the agent cannot reach the vault, raw CDP, the CLI token or the network
+        around the egress proxy, and that every new route has a test proving the boundary holds.
+    - path: "**/*.{ts,tsx,md}"
+      instructions: "User-facing text must be short and plain, and must never contain an em dash."
+chat:
+  auto_reply: true

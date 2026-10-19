@@ -1,0 +1,22 @@
+{
+  "name": "@quokkabot/supervisor",
+  "version": "0.0.0",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p scripts/tsconfig.json",
+    "smoke:docker": "node --experimental-strip-types scripts/real-docker-smoke.ts",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@quokkabot/shared": "workspace:*",
+    "zod": "4.6.7",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.2"
+  }
+}

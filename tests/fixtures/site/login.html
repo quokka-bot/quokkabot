@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fixture sign-in</title>
+<meta name="robots" content="noindex">
+</head>
+<body>
+<h1>Sign in</h1>
+<!-- The vault end-to-end test: Quokka Bot types a saved login into these fields; the page shows SHA-256 digests of
+     what arrived, never the values, so the test can compare without the values entering a snapshot. -->
+<form id="signin">
+  <label>Email <input id="user" name="user" type="email" autocomplete="username"></label>
+  <label>Password <input id="pass" name="pass" type="password" autocomplete="current-password"></label>
+  <label>Code <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></label>
+  <button type="submit">Sign in</button>
+</form>
+<p id="result">Not signed in</p>
+<script>
+async function digest(value) {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+document.getElementById("signin").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const user = await digest(document.getElementById("user").value);
+  const pass = await digest(document.getElementById("pass").value);
+  const code = await digest(document.getElementById("code").value);
+  document.getElementById("result").textContent = `Signed in. user ${user} pass ${pass} code ${code}`;
+});
+</script>
+</body>
+</html>

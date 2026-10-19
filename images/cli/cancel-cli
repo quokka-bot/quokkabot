@@ -1,0 +1,86 @@
+#!/bin/bash
+# cancel-cli <runId>
+#
+# Stops the process group that run-cli recorded for <runId>: SIGINT first (Claude Code ends the turn), then
+# SIGKILL to the whole group if anything in it is still alive after 10 seconds.
+# Exit 0: the group is gone (stopped now or already), so repeated cancels are safe. Exit 1: something survived
+# SIGKILL. Exit 2: bad input. Exit 3: this sandbox never started that run. The record stays in /tmp so a later
+# cancel of the same run still answers "not running".
+set -euo pipefail
+
+readonly RUNS_DIR=/tmp/quokkabot-runs
+readonly UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+readonly GRACE_SECONDS=10
+readonly KILL_WAIT_SECONDS=5
+
+die() {
+  echo "cancel-cli: $1" >&2
+  exit "$2"
+}
+
+[[ $# -eq 1 ]] || die "usage: cancel-cli <runId>" 2
+run_id=$1
+[[ "$run_id" =~ $UUID_RE ]] || die "run id must be a lowercase UUID" 2
+record="$RUNS_DIR/$run_id"
+[[ -f "$record" ]] || die "no record of run $run_id in this sandbox" 3
+
+read -r pgid recorded_start <"$record"
+[[ "$pgid" =~ ^[0-9]+$ && "$recorded_start" =~ ^[0-9]+$ ]] || die "corrupt record for run $run_id" 2
+
+# Fields after the last ")" of /proc/<pid>/stat: [0]=state, [2]=pgrp, [19]=starttime.
+stat_fields() {
+  local stat
+  stat=$(<"/proc/$1/stat") || return 1
+  echo "${stat##*) }"
+}
+
+# True while any process other than a zombie is in the group.
+group_alive() {
+  local entry pid rest
+  local -a fields
+  for entry in /proc/[0-9]*; do
+    pid=${entry#/proc/}
+    rest=$(stat_fields "$pid" 2>/dev/null) || continue
+    read -r -a fields <<<"$rest"
+    if [[ "${fields[2]}" == "$pgid" && "${fields[0]}" != "Z" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# A pid stays allocated while its process group has members, so the group id cannot be reused while the run's
+# processes live. If the leader pid is alive with a different start time, the run is gone and the pid now belongs
+# to an unrelated process.
+if leader=$(stat_fields "$pgid" 2>/dev/null); then
+  read -r -a leader_fields <<<"$leader"
+  if [[ "${leader_fields[19]}" != "$recorded_start" ]]; then
+    echo "cancel-cli: run $run_id is not running"
+    exit 0
+  fi
+fi
+
+if ! group_alive; then
+  echo "cancel-cli: run $run_id is not running"
+  exit 0
+fi
+
+kill -INT -- "-$pgid" 2>/dev/null || true
+for ((i = 0; i < GRACE_SECONDS * 5; i++)); do
+  if ! group_alive; then
+    echo "cancel-cli: run $run_id stopped after SIGINT (process group $pgid)"
+    exit 0
+  fi
+  sleep 0.2
+done
+
+kill -KILL -- "-$pgid" 2>/dev/null || true
+for ((i = 0; i < KILL_WAIT_SECONDS * 5; i++)); do
+  if ! group_alive; then
+    echo "cancel-cli: run $run_id killed with SIGKILL after ${GRACE_SECONDS}s (process group $pgid)"
+    exit 0
+  fi
+  sleep 0.2
+done
+
+die "process group $pgid of run $run_id survived SIGKILL" 1

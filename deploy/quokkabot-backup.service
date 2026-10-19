@@ -1,0 +1,11 @@
+[Unit]
+Description=Quokka Bot off-server backup
+Requires=docker.service
+After=docker.service
+RequiresMountsFor=/var/lib/quokkabot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/quokkabot-backup run
+Nice=10
+IOSchedulingClass=idle

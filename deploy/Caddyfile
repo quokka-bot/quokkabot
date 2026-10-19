@@ -1,0 +1,20 @@
+# Two sites, both served by the control plane: the owner app and the live viewer on its own origin. Caddy keeps
+# the Host header so control can tell them apart. Certificates come from Let's Encrypt (DNS A records for both
+# names must point at this server).
+{
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$QUOKKABOT_DOMAIN} {
+	reverse_proxy 10.230.0.3:8080 {
+		header_up Host {host}
+	}
+}
+
+{$QUOKKABOT_VIEW_DOMAIN} {
+	reverse_proxy 10.230.0.3:8080 {
+		header_up Host {host}
+	}
+}

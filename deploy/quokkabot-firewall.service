@@ -1,0 +1,17 @@
+[Unit]
+Description=Quokka Bot host firewall (nftables table inet quokkabot)
+Documentation=file:///opt/quokkabot/src/docs/install.md
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target docker.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/quokkabot/nftables.conf
+ExecReload=/usr/sbin/nft -f /etc/quokkabot/nftables.conf
+ExecStop=/usr/sbin/nft delete table inet quokkabot
+
+[Install]
+WantedBy=multi-user.target

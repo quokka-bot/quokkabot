@@ -1,0 +1,42 @@
+#!/usr/bin/with-contenv bash
+# shellcheck shell=bash
+# Runs once before Selkies, nginx and the desktop start. Refuses to bring the computer up without the settings
+# that keep it closed: Selkies secure mode (master token), an explicit viewer origin, command and file-transfer
+# channels off, the browser service token and the egress proxy. S6_BEHAVIOUR_IF_STAGE2_FAILS=2 stops the
+# container when this exits non-zero.
+set -euo pipefail
+
+fail() {
+  echo "[init-quokkabot] $*" >&2
+  exit 1
+}
+
+master_token=${SELKIES_MASTER_TOKEN:-}
+service_token=${QUOKKABOT_BROWSER_SERVICE_TOKEN:-}
+[[ ${#master_token} -ge 32 ]] || fail "SELKIES_MASTER_TOKEN must be set (at least 32 characters)"
+[[ ${#service_token} -ge 32 ]] || fail "QUOKKABOT_BROWSER_SERVICE_TOKEN must be set (at least 32 characters)"
+[[ "${QUOKKABOT_PROXY:-}" =~ ^http://[A-Za-z0-9.-]+:[0-9]{1,5}/?$ ]] ||
+  fail "QUOKKABOT_PROXY must be an http proxy origin such as http://10.232.1.2:3128"
+
+# Exact origins only: https, or http on *.localhost for development. Never "*".
+origins=${SELKIES_ALLOWED_ORIGINS:-}
+[[ -n "$origins" ]] || fail "SELKIES_ALLOWED_ORIGINS must name the viewer origin"
+IFS=',' read -r -a origin_list <<<"$origins"
+for origin in "${origin_list[@]}"; do
+  if [[ ! "$origin" =~ ^https://[a-z0-9.-]+(:[0-9]{1,5})?$ && ! "$origin" =~ ^http://([a-z0-9-]+\.)*localhost(:[0-9]{1,5})?$ ]]; then
+    fail "SELKIES_ALLOWED_ORIGINS entry is not an exact origin: $origin"
+  fi
+done
+
+[[ "${SELKIES_COMMAND_ENABLED:-}" == "false" ]] || fail "SELKIES_COMMAND_ENABLED must be false"
+[[ -z "${SELKIES_FILE_TRANSFERS:-}" || "${SELKIES_FILE_TRANSFERS}" == "none" ]] ||
+  fail "SELKIES_FILE_TRANSFERS must be empty"
+[[ "${SELKIES_AUDIO_ENABLED:-}" == "false" && "${SELKIES_MICROPHONE_ENABLED:-}" == "false" ]] ||
+  fail "SELKIES_AUDIO_ENABLED and SELKIES_MICROPHONE_ENABLED must be false"
+
+# Download staging belongs to the desktop user (uid 1000) and nobody else.
+[[ -d /staging && ! -L /staging ]] || fail "/staging must be a directory"
+chown abc:abc /staging
+chmod 0700 /staging
+
+echo "[init-quokkabot] settings checked; staging ready"

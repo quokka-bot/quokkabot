@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ideas and questions
+    url: https://github.com/quokka-bot/quokkabot/discussions
+    about: Feature ideas and questions go to Discussions.
+  - name: Security vulnerability
+    url: https://github.com/quokka-bot/quokkabot/security/advisories/new
+    about: Report it privately, never in a public issue.

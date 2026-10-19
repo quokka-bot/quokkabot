@@ -1,0 +1,32 @@
+#!/usr/bin/with-contenv bash
+# shellcheck shell=bash
+# Quokka Bot browser service (apps/browser-service): owns Chrome's lifecycle and is the only client of its DevTools
+# port. Runs as the desktop user (abc, uid 1000) once the X server and the window manager are up. Its environment
+# is an explicit list: the Selkies master token and the rest of the container environment stay out of it and out
+# of Chrome.
+set -euo pipefail
+
+readonly MAIN=/opt/quokkabot/browser-service/dist/main.js
+
+if [[ ! -f "$MAIN" ]]; then
+  echo "[svc-quokkabot-browser] $MAIN is missing; this browser image was built without apps/browser-service" >&2
+  exit 1
+fi
+
+until s6-setuidgid abc env DISPLAY=:1 xset q >/dev/null 2>&1 && pgrep -x xfwm4 >/dev/null; do
+  sleep 0.5
+done
+
+cd /config
+exec s6-setuidgid abc env -i \
+  HOME=/config \
+  DISPLAY=:1 \
+  PATH=/usr/local/bin:/usr/bin:/bin \
+  LANG=C.UTF-8 \
+  TZ="${TZ:-Etc/UTC}" \
+  XDG_RUNTIME_DIR=/config/.XDG \
+  QUOKKABOT_PROXY="$QUOKKABOT_PROXY" \
+  QUOKKABOT_BROWSER_SERVICE_TOKEN="$QUOKKABOT_BROWSER_SERVICE_TOKEN" \
+  QUOKKABOT_CHROME="$QUOKKABOT_CHROME" \
+  QUOKKABOT_AGENT_BROWSER="$QUOKKABOT_AGENT_BROWSER" \
+  /usr/local/bin/node "$MAIN"

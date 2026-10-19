@@ -1,0 +1,52 @@
+#!/bin/bash
+# run-cli <runId> /usr/local/bin/claude <args...>
+#
+# Starts one Claude Code run as the leader of its own session and process group and records that group, so
+# `cancel-cli <runId>` can stop the CLI and everything it started. The prompt arrives on stdin and is passed
+# through untouched. The supervisor reads the exit code of this exec.
+set -euo pipefail
+
+readonly RUNS_DIR=/tmp/quokkabot-runs
+readonly CLAUDE_BIN=/usr/local/bin/claude
+readonly UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+die() {
+  echo "run-cli: $*" >&2
+  exit 2
+}
+
+# Prints "<pgrp> <starttime>" for a pid from /proc/<pid>/stat. The command name (field 2) may contain spaces and
+# parentheses, so the fields are read after the last ")".
+proc_group_and_start() {
+  local stat rest
+  stat=$(<"/proc/$1/stat")
+  rest=${stat##*) }
+  local -a fields
+  read -r -a fields <<<"$rest"
+  # fields[0] is field 3 (state); pgrp is field 5, starttime is field 22.
+  echo "${fields[2]} ${fields[19]}"
+}
+
+if [[ "${1:-}" == "--in-session" ]]; then
+  shift
+  run_id=$1
+  shift
+  read -r pgrp starttime < <(proc_group_and_start $$)
+  [[ "$pgrp" == "$$" ]] || die "setsid did not make pid $$ a process group leader (pgrp $pgrp)"
+  [[ -d "$RUNS_DIR" ]] || mkdir -m 0700 "$RUNS_DIR"
+  record="$RUNS_DIR/$run_id"
+  [[ ! -e "$record" ]] || die "run $run_id was already started in this sandbox"
+  printf '%s %s\n' "$$" "$starttime" >"$record.tmp"
+  mv "$record.tmp" "$record"
+  # exec keeps the pid, so the CLI itself is the group leader recorded above.
+  exec "$@"
+fi
+
+[[ $# -ge 2 ]] || die "usage: run-cli <runId> $CLAUDE_BIN [args...]"
+run_id=$1
+[[ "$run_id" =~ $UUID_RE ]] || die "run id must be a lowercase UUID"
+[[ "$2" == "$CLAUDE_BIN" ]] || die "only $CLAUDE_BIN may be started, got: $2"
+
+# setsid calls setsid(2) in this process when it is not already a group leader; otherwise it forks, and --wait
+# keeps the exec alive until the child exits and returns the child's exit status.
+exec /usr/bin/setsid --wait "$0" --in-session "$@"

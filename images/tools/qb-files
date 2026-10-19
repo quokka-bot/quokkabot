@@ -1,0 +1,9 @@
+#!/bin/sh
+# Quokka Bot file helper: a JSON request on stdin, one JSON result on stdout (or raw bytes with `export`).
+set -eu
+main=/opt/quokkabot/files-helper/dist/main.js
+if [ ! -f "$main" ]; then
+  echo "qb-files: $main is missing; this tools image was built without apps/files-helper" >&2
+  exit 1
+fi
+exec /usr/local/bin/node "$main" "$@"

@@ -1,0 +1,30 @@
+{
+  "DownloadDirectory": "/staging",
+  "PromptForDownloadLocation": false,
+  "AlwaysOpenPdfExternally": true,
+  "PasswordManagerEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "SyncDisabled": true,
+  "BrowserSignin": 0,
+  "MetricsReportingEnabled": false,
+  "SearchSuggestEnabled": false,
+  "SafeBrowsingProtectionLevel": 0,
+  "QuicAllowed": false,
+  "WebRtcIPHandling": "disable_non_proxied_udp",
+  "URLBlocklist": [
+    "localhost",
+    "127.0.0.1",
+    "[::1]",
+    "0.0.0.0",
+    "file://*"
+  ],
+  "BackgroundModeEnabled": false,
+  "ComponentUpdatesEnabled": false,
+  "TranslateEnabled": false,
+  "SpellCheckServiceEnabled": false,
+  "PromotionsEnabled": false,
+  "PasswordLeakDetectionEnabled": false,
+  "PasswordManagerPasskeysEnabled": false,
+  "NewTabPageLocation": "about:blank"
+}

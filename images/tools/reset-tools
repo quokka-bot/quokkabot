@@ -1,0 +1,13 @@
+#!/bin/bash
+# reset-tools: kills every process outside session 1 (the image's init and its `sleep infinity`) and outside this
+# script's own session, so nothing the agent started survives into the next task.
+set -euo pipefail
+self_stat=$(</proc/$$/stat)
+self_rest=${self_stat##*) }
+read -r _ _ _ self_sid _ <<<"$self_rest"
+for p in /proc/[0-9]*; do
+  stat=$(<"$p/stat") 2>/dev/null || continue
+  rest=${stat##*) }
+  read -r _s _pp _pg sid _ <<<"$rest"
+  if [ "$sid" != 1 ] && [ "$sid" != "$self_sid" ]; then kill -KILL "${p#/proc/}" 2>/dev/null || true; fi
+done
