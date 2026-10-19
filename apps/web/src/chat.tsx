@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { REACTION_EMOJIS, TERMINAL_TASK_STATES, type AgentSummary, type DomainRequestView, type OwnerRequest, type ReactionEmoji, type Task } from "@quokkabot/shared";
-import { askedLine, chatItems, listSites, messageReactions, sitesLine, timeLabel, workingStatus, type StepLine } from "@quokkabot/client";
+import { askedLine, chatItems, listSites, liveTask, messageReactions, sitesLine, timeLabel, workingStatus, type StepLine } from "@quokkabot/client";
 import { IMAGE_ACCEPT, ImageChips, OwnerImages, useChatImages } from "./chat-images.js";
 import { api } from "./api.js";
 import { AgentAvatar } from "./avatar.js";
@@ -84,15 +84,14 @@ function Bubble({ from, children, live = false, reaction, reactTo }: {
   </div></div>;
 }
 
-function CurrentTask({ agent, index, task, openRequests, earliestAt }: { agent: AgentSummary; index: number; task: Task; openRequests: OwnerRequest[]; earliestAt: string | null }) {
+function CurrentTask({ agent, index, task, snapshotSeq, openRequests, earliestAt }: { agent: AgentSummary; index: number; task: Task; snapshotSeq: number; openRequests: OwnerRequest[]; earliestAt: string | null }) {
   const stream = useTaskStream(task.id);
   const interval = usePollInterval();
   const inbox = useQuery({ queryKey: ["inbox"], queryFn: api.inbox, refetchInterval: interval });
   const items = useMemo(() => chatItems(stream.events), [stream.events]);
   const reactions = useMemo(() => messageReactions(stream.events), [stream.events]);
-  // The live state: the latest state event in the stream, else the task as loaded.
-  const stateEvent = stream.events.findLast(envelope => envelope.event.kind === "state")?.event;
-  const liveState = stateEvent?.kind === "state" ? stateEvent : { state: task.state, blockedReason: task.blockedReason };
+  // The live state: a state event the stream delivered after the task was loaded, else the task as loaded.
+  const liveState = liveTask(task, snapshotSeq, stream.events);
   const terminal = TERMINAL_TASK_STATES.has(liveState.state);
   const placedSites = new Set(items.flatMap(item => item.kind === "domain" ? [item.requestId] : []));
   const placedRequests = new Set(items.flatMap(item => item.kind === "request" ? [item.request.id] : []));
@@ -259,7 +258,7 @@ export function AgentChat({ agent, index }: { agent: AgentSummary; index: number
         {earlier.map((task, i) => <EarlierTask key={task.id} task={task} onOpen={() => open(task.id)} divider={i === 0 || Date.parse(task.createdAt) - Date.parse(earlier[i - 1]?.updatedAt ?? task.createdAt) > DIVIDER_GAP_MS} />)}
         {wantsNew && list.length > 0 && <p className="notice info">New task</p>}
         <ErrorLine error={detail.error} />
-        {current && <CurrentTask key={current.id} agent={agent} index={index} task={current} openRequests={openRequests} earliestAt={earlier.at(-1)?.updatedAt ?? null} />}
+        {current && detail.data && <CurrentTask key={current.id} agent={agent} index={index} task={current} snapshotSeq={detail.data.lastSeq} openRequests={openRequests} earliestAt={earlier.at(-1)?.updatedAt ?? null} />}
         {position > 0 && <p className="notice info"><Link to={`/agents/${agent.id}`}>Back to the latest task</Link></p>}
       </div>
     </div>

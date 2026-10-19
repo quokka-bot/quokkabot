@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useIsFocused } from "expo-router";
+import { AppState } from "react-native";
 import type { TaskEventEnvelope } from "@quokkabot/shared";
 import { useSession, useSignedIn } from "../session";
 import { openTaskStream } from "../stream";
 
+// Open while the chat is on screen: another screen over it (the computer) or the app in the background closes the
+// stream, and it continues from the last event when the chat shows again.
 export function useTaskStream(taskId: string | null) {
   const { connection } = useSignedIn();
   const { signOut } = useSession();
@@ -17,8 +21,15 @@ export function useTaskStream(taskId: string | null) {
   const [error, setError] = useState<Error | null>(null);
   const [state, setState] = useState<"connecting" | "live" | "reconnecting" | "stopped">("connecting");
   const [revision, setRevision] = useState(0);
+  const focused = useIsFocused();
+  const [foreground, setForeground] = useState(AppState.currentState !== "background");
   useEffect(() => {
-    if (taskId === null) return;
+    const subscription = AppState.addEventListener("change", (next) => setForeground(next !== "background"));
+    return () => subscription.remove();
+  }, []);
+  const visible = focused && foreground;
+  useEffect(() => {
+    if (taskId === null || !visible) return;
     let alive = true;
     const sequence = cursor.current;
     setError(null);
@@ -38,7 +49,7 @@ export function useTaskStream(taskId: string | null) {
       onSignedOut: () => { if (alive) void signOut("This phone was signed out. Sign in again."); },
     });
     return () => { alive = false; close(); };
-  }, [client, connection.origin, connection.token, key, revision, signOut, taskId]);
+  }, [client, connection.origin, connection.token, key, revision, signOut, taskId, visible]);
   return { events: output.scope === cursor.current ? output.events : [], error, connection: state, lastSeq: cursor.current.lastSeq,
     reconnect: () => setRevision(value => value + 1) };
 }

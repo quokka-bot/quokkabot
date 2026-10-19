@@ -73,7 +73,8 @@ export async function pollLink(fetchImpl: Fetch, origin: string, pollToken: stri
   return result.state === "approved" ? { token: result.token } : { state: result.state };
 }
 
-// Polls every two seconds until the owner approves or refuses, or the link expires. Stops when `stopped` says so.
+// Polls every two seconds until the owner approves or refuses, or the link expires. Stops when `stopped` says so,
+// checked again after each answer: an approval that arrives after the owner left the screen signs nothing in.
 // The owner approves in a browser or on another device, and the phone's connection can drop meanwhile: a failed
 // request, a 429 or a 5xx is asked again, so the approval is still collected. A 4xx or an answer that is not a link's
 // state ends the wait.
@@ -84,6 +85,7 @@ export async function waitForLink(fetchImpl: Fetch, origin: string, pollToken: s
     let result: Awaited<ReturnType<typeof pollLink>> | null = null;
     try { result = await pollLink(fetchImpl, origin, pollToken); }
     catch (error) { if (!temporary(error)) throw error; }
+    if (stopped()) return { state: "stopped" };
     if (result && "token" in result) return result;
     if (result && result.state !== "pending") return { state: result.state };
     await sleep(2000);

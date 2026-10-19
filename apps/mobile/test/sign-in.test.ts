@@ -64,6 +64,10 @@ describe("sign-in requests", () => {
     let stop = false;
     const stopping = waitForLink(async () => { stop = true; return json(202, { state: "pending" }); }, "https://bot.example.com", "p".repeat(43), () => stop, sleep);
     await expect(stopping).resolves.toEqual({ state: "stopped" });
+    // The owner left while the approval was on its way: the token is dropped, not handed to sign-in.
+    let left = false;
+    const late = waitForLink(async () => { left = true; return json(200, { state: "approved", token: "t".repeat(43) }); }, "https://bot.example.com", "p".repeat(43), () => left, sleep);
+    await expect(late).resolves.toEqual({ state: "stopped" });
   });
 
   it("keeps polling through a dropped connection and server errors, and stops on a refused request or a bad answer", async () => {

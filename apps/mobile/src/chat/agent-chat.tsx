@@ -4,7 +4,7 @@ import { router, Stack } from "expo-router";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TERMINAL_TASK_STATES, type AgentSummary, type DomainRequestView, type InboxResponse, type OwnerRequest, type Task } from "@quokkabot/shared";
-import { askedLine, chatItems, listSites, messageReactions, sitesLine, timeLabel, workingStatus, type StepLine } from "@quokkabot/client";
+import { askedLine, chatItems, listSites, liveTask, messageReactions, sitesLine, timeLabel, workingStatus, type StepLine } from "@quokkabot/client";
 import { DomainRequestCard, OpenOnWeb, RequestCard } from "../cards/requests";
 import { useSignedIn } from "../session";
 import { AgentAvatar, Button, ErrorLine, Notice } from "../ui/kit";
@@ -13,6 +13,7 @@ import { Bubble, bubbleStyles } from "./bubble";
 import { Composer } from "./composer";
 import { Markdown } from "./markdown";
 import { bytesLabel } from "./report";
+import { useAction } from "./use-action";
 import { useTaskStream } from "./use-task-stream";
 
 const DIVIDER_GAP_MS = 15 * 60_000;
@@ -110,11 +111,34 @@ function CurrentTask({ agent, task, openRequests, earliestAt, stream, inbox }: {
       {task.result.files.map(file => <View key={file.fileId} style={styles.file}><Text style={styles.fileName}>{file.name}</Text><Text style={styles.meta}>{bytesLabel(file.bytes)} · {file.scope}</Text></View>)}
       <OpenOnWeb agentId={agent.id} title="Open in the web app" />
     </View>}
-    {task.error && (/signed out/i.test(task.error) ? <Notice>{SIGNED_OUT}</Notice>
+    {task.error && (/signed out/i.test(task.error) ? agent.cliSignedIn === "yes" ? <RetryNotice agentId={agent.id} taskId={task.id} /> : <Notice>{SIGNED_OUT}</Notice>
       : !items.some(item => item.kind === "notice" && item.text === task.error) && <ErrorLine error={task.error} />)}
     <ErrorLine error={stream.error} />
     {Boolean(stream.error) && <Button title="Reconnect" kind="light" onPress={stream.reconnect} />}
   </>;
+}
+
+// The task failed because Claude was signed out, and it is signed in now: the retry instead of the old error.
+function RetryNotice({ agentId, taskId }: { agentId: string; taskId: string }) {
+  const { api } = useSignedIn();
+  const retry = useAction(agentId, () => api.message(taskId, "Try again."));
+  return <View style={styles.retry}>
+    <Notice>This failed while Claude was signed out. It is signed in now.</Notice>
+    <Button title="Try again" onPress={() => retry.run()} busy={retry.isPending} />
+    <ErrorLine error={retry.error} />
+  </View>;
+}
+
+// While the attended session is open, the sites approved only while the owner watches are reachable for the agent.
+// Closing it here never asks for the AI provider permission.
+function AttendedBar({ agentId }: { agentId: string }) {
+  const { api } = useSignedIn();
+  const close = useAction(agentId, () => api.attended(agentId, false), false);
+  return <View style={styles.attended} accessibilityLiveRegion="polite">
+    <Text style={[styles.meta, styles.flex]}>Attended session on: sites you allowed only while you watch are reachable.</Text>
+    <Button title="Turn off" kind="light" onPress={() => close.run()} busy={close.isPending} />
+    <ErrorLine error={close.error} />
+  </View>;
 }
 
 export function AgentChat({ agentId }: { agentId: string }) {
@@ -136,9 +160,9 @@ function Chat({ agent }: { agent: AgentSummary }) {
   const selectedId = selection === undefined ? list[0]?.id ?? null : selection;
   const detail = useQuery({ queryKey: [connection.origin, "task", selectedId], queryFn: () => api.task(selectedId as string), enabled: selectedId !== null, refetchInterval: 5000 });
   const stream = useTaskStream(selectedId);
-  const stateEvent = stream.events.findLast(envelope => envelope.event.kind === "state")?.event;
-  const loaded = selectedId === null ? null : detail.data?.task ?? null;
-  const current = loaded && stateEvent?.kind === "state" ? { ...loaded, state: stateEvent.state, blockedReason: stateEvent.blockedReason } : loaded;
+  // The task as loaded, or newer: a state event the stream delivered after the load.
+  const loaded = selectedId === null ? null : detail.data ?? null;
+  const current = loaded ? liveTask(loaded.task, loaded.lastSeq, stream.events) : null;
   const position = selectedId === null ? 0 : list.findIndex(task => task.id === selectedId);
   const earlier = (position >= 0 ? list.slice(position + 1) : []).slice(0, 6).reverse();
   const inbox = useQuery({ queryKey: [connection.origin, "inbox"], queryFn: api.inbox, refetchInterval: 5000 });
@@ -163,6 +187,7 @@ function Chat({ agent }: { agent: AgentSummary }) {
       {current && <CurrentTask key={current.id} agent={agent} task={current} openRequests={openRequests} earliestAt={earlier.at(-1)?.updatedAt ?? null} stream={stream} inbox={inbox.data} />}
       {position > 0 && <Button title="Back to the latest task" kind="quiet" onPress={() => setSelection(undefined)} />}
     </ScrollView>
+    {agent.computer.attendedOpen && <AttendedBar agentId={agent.id} />}
     <View style={{ paddingBottom: insets.bottom }}><Composer agent={agent} task={current} ready={!tasks.isPending && !tasks.error && (selectedId === null || current !== null)}
       openQuestion={openQuestion} waiting={openRequests.length > 0 || openSites} startNew={() => setSelection(null)} onCreated={task => setSelection(task.id)} /></View>
   </KeyboardAvoidingView>;
@@ -175,5 +200,6 @@ const styles = StyleSheet.create({
   meta: { color: colors.muted, fontSize: 13 }, note: { fontStyle: "italic" }, working: { flexDirection: "row", alignItems: "center", gap: 10, marginVertical: 12 }, flex: { flex: 1 },
   files: { gap: 10, marginVertical: 10 }, file: { backgroundColor: colors.sidebar, borderRadius: 12, padding: 14, gap: 4 }, fileName: { color: colors.text, fontSize: 16, fontWeight: "600" },
   empty: { alignItems: "center", paddingVertical: 40, gap: 12 }, name: { fontSize: 28, fontWeight: "700", color: colors.text },
-  intro: { color: colors.textSoft, fontSize: 16, textAlign: "center" },
+  intro: { color: colors.textSoft, fontSize: 16, textAlign: "center" }, retry: { gap: 8, marginVertical: 8 },
+  attended: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 10, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: colors.sidebar },
 });

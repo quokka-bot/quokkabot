@@ -104,7 +104,8 @@ export function DomainRequestCard({ request, agentId }: { request: DomainRequest
   });
   if (resolved || request.decidedAt !== null) return <Notice>{sitesLine(resolved ?? request.decision, listSites(request.domains))}</Notice>;
   return <Card title={`Allow ${listSites(request.domains)}`} detail={request.reason}>
-    <View style={styles.switchRow}><Text style={styles.switchText}>Only while I watch</Text>
+    <View style={styles.switchRow}><View style={styles.switchLabel}><Text style={styles.switchText}>Only while I watch</Text>
+      <Text style={styles.switchHint}>Reachable while the attended session is on, in Computer.</Text></View>
       <Switch accessibilityLabel="Only while I watch" value={attended} onValueChange={setAttended} disabled={decide.isPending} /></View>
     <View style={styles.actions}>
       <Button title="Allow for this task" onPress={() => decide.run("allow_task")} disabled={request.taskId === null || decide.isPending} />
@@ -118,5 +119,5 @@ const styles = StyleSheet.create({
   card: { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.line, borderRadius: 18, padding: 16, gap: 12, marginVertical: 6 },
   title: { fontSize: 17, fontWeight: "600", color: colors.text }, detail: { fontSize: 15, color: colors.textSoft },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, switchRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  switchText: { flex: 1, color: colors.text, fontSize: 15 },
+  switchLabel: { flex: 1, gap: 2 }, switchText: { color: colors.text, fontSize: 15 }, switchHint: { color: colors.muted, fontSize: 13 },
 });

@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { Alert, AppState, KeyboardAvoidingView, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, AppState, KeyboardAvoidingView, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import type { AgentSummary, TakeoverFocusResponse } from "@quokkabot/shared";
-import { withConsent } from "../consent";
 import { useSignedIn } from "../session";
+import { handBack, setAttended } from "./actions";
 import { Viewer } from "./viewer";
 
 type Field = NonNullable<TakeoverFocusResponse["field"]>;
@@ -29,7 +29,7 @@ export function ComputerScreen({ agentId }: { agentId: string }) {
     return () => subscription.remove();
   }, []);
   const inbox = useQuery({ queryKey: [connection.origin, "inbox"], queryFn: api.inbox });
-  const run = async (work: () => Promise<unknown>) => {
+  const run = async (work: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setError(null);
     try { await work(); await client.invalidateQueries({ queryKey: [connection.origin, "agent", agentId] }); }
     catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
@@ -41,11 +41,8 @@ export function ComputerScreen({ agentId }: { agentId: string }) {
   const killed = data?.computer.state === "killed";
   // A takeover the agent asked for ends with "I'm done", which tells the agent; one the owner started hands back.
   const asked = inbox.data?.items.find((item) => item.kind === "owner_request" && item.agentId === agentId && item.request.kind === "takeover" && item.request.answeredAt === null);
-  // Without consent, "I'm done" opens the permission screen and sends nothing: the owner taps it again after allowing.
-  const handBack = () => {
-    if (asked?.kind === "owner_request") withConsent(connection.origin, agentId, () => void run(() => api.takeoverDone(asked.request.taskId)));
-    else void run(() => api.takeover(agentId, "return"));
-  };
+  const askedTaskId = asked?.kind === "owner_request" ? asked.request.taskId : null;
+  const attendedOpen = data?.computer.attendedOpen ?? false;
   const stopEverything = () => Alert.alert("Stop everything?", "Closes this agent's network and stops its computer. Starting it again needs your passkey in the web app.", [
     { text: "Cancel", style: "cancel" },
     { text: "Stop everything", style: "destructive", onPress: () => void run(() => api.kill(agentId)) },
@@ -70,9 +67,15 @@ export function ComputerScreen({ agentId }: { agentId: string }) {
       {holder === "owner" && <NativeFields agentId={agentId} />}
       <View style={styles.controls}>
         {holder === "owner"
-          ? <Pressable accessibilityRole="button" style={styles.pill} disabled={busy} onPress={handBack}><Text style={styles.pillText}>{asked ? "I'm done, continue" : "Hand back"}</Text></Pressable>
+          ? <Pressable accessibilityRole="button" style={styles.pill} disabled={busy} onPress={() => handBack(connection.origin, agentId, askedTaskId, api, (work) => void run(work))}><Text style={styles.pillText}>{asked ? "I'm done, continue" : "Hand back"}</Text></Pressable>
           : <Pressable accessibilityRole="button" style={styles.pill} disabled={busy || killed} onPress={() => void run(() => api.takeover(agentId, "take"))}><Text style={styles.pillText}>Take over</Text></Pressable>}
         <Pressable accessibilityRole="button" style={[styles.pill, styles.quiet]} onPress={() => setRevision((value) => value + 1)}><Text style={styles.quietText}>Refresh view</Text></Pressable>
+      </View>
+      <View style={styles.attended}>
+        <View style={styles.attendedText}><Text style={styles.attendedTitle}>Attended session</Text>
+          <Text style={styles.attendedHint}>Sites you allowed only while you watch are reachable while this is on.</Text></View>
+        <Switch accessibilityLabel="Attended session" value={attendedOpen} disabled={busy || killed}
+          onValueChange={(open) => setAttended(connection.origin, agentId, open, api, (work) => void run(work))} />
       </View>
       {error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
     </KeyboardAvoidingView>}
@@ -160,5 +163,9 @@ const styles = StyleSheet.create({
   fillButton: { minHeight: 46, paddingHorizontal: 18, borderRadius: 12, backgroundColor: "#7442D1", alignItems: "center", justifyContent: "center" },
   fillText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   hint: { color: "#bbb", fontSize: 14, textAlign: "center" },
+  attended: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingBottom: 8 },
+  attendedText: { flex: 1, alignItems: "flex-start" },
+  attendedTitle: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  attendedHint: { color: "#bbb", fontSize: 13 },
   error: { color: "#FF6B5E", fontSize: 14, textAlign: "center", paddingBottom: 8 },
 });

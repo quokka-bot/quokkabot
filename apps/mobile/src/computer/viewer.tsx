@@ -2,10 +2,13 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { WebView } from "react-native-webview";
 import { useSignedIn } from "../session";
+import { viewerMayLoad } from "./viewer-policy";
 
 // The agent's computer as Selkies streams it, on the server's own viewer origin. The page is the server's viewer
 // client: it gets a one-time ticket, nothing else from the app, and no bridge to it (no onMessage). It cannot leave
 // the viewer origin, open windows, use the camera or microphone, or keep cookies after the screen closes.
+// Every navigation goes to viewerMayLoad: the WebView's own originWhitelist would hand a URL outside it to iOS
+// (Safari, another app) before asking, so it lets everything through to that check. New windows are dropped.
 export function Viewer({ agentId, revision }: { agentId: string; revision: number }) {
   const { api, connection } = useSignedIn();
   const [url, setUrl] = useState<string | null>(null);
@@ -24,8 +27,9 @@ export function Viewer({ agentId, revision }: { agentId: string; revision: numbe
     source={{ uri: url }}
     style={styles.web}
     incognito
-    originWhitelist={[connection.viewOrigin]}
-    onShouldStartLoadWithRequest={(request) => request.url === "about:blank" || new URL(request.url).origin === connection.viewOrigin}
+    originWhitelist={["*"]}
+    onShouldStartLoadWithRequest={(request) => viewerMayLoad(request.url, connection.viewOrigin)}
+    onOpenWindow={(): void => undefined}
     javaScriptCanOpenWindowsAutomatically={false}
     setSupportMultipleWindows={false}
     mediaCapturePermissionGrantType="deny"

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  AgentSummary, AgentsResponse, ApiError, ComputerView, ControlLease, CreateTaskRequest, DecideDomainRequest, DomainsView, EmptyResponse,
+  AgentSummary, AgentsResponse, ApiError, AttendedRequest, ComputerView, ControlLease, CreateTaskRequest, DecideDomainRequest, DomainsView, EmptyResponse,
   InboxResponse, LoginView, Me, ReactionRequest, type ReactionEmoji, ReplyRequest, SaveLoginRequest, SessionView,
   TakeoverDoneRequest, TakeoverFillRequest, TakeoverFillResponse, TakeoverFocusResponse, TakeoverRequest, Task, TaskDetail,
   TaskPage, UpdateLoginRequest, ViewTicketResponse,
@@ -101,6 +101,8 @@ export function createApi(fetchImpl: Fetch, origin: string, token: string, onSig
     startComputer: (id: string) => request(`${agentPath(id)}/computer/start`, ComputerView, "POST", {}),
     // The kill switch: closes the agent's network and stops its sandboxes. Releasing it needs a passkey check on the web.
     kill: (id: string) => request(`${agentPath(id)}/kill`, ComputerView, "POST", {}),
+    // The attended session: sites approved "only while I watch" (government, banks) are reachable while it is open.
+    attended: (id: string, open: boolean) => request(`${agentPath(id)}/attended`, ComputerView, "POST", AttendedRequest.parse({ open })),
     // During the owner's takeover: which field is focused on the computer (its site and kind, never its value), and
     // typing the phone's native field into it.
     takeoverFocus: (id: string) => request(`${agentPath(id)}/takeover/focus`, TakeoverFocusResponse),

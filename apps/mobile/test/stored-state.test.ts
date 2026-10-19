@@ -56,3 +56,14 @@ it("reads only text values from the consent file", async () => {
   expect(consent.hasConsent("https://bot.example.com", "agent")).toBe(true);
   expect(consent.hasConsent("https://bot.example.com", "other")).toBe(false);
 });
+
+it("turns the AI provider permission on in Settings only through the permission screen", async () => {
+  const { router } = await import("expo-router");
+  const { changeConsent, grantConsent, hasConsent } = await import("../src/consent");
+  changeConsent("https://bot.example.com", "agent-id", true);
+  expect(router.push).toHaveBeenCalledWith({ pathname: "/consent/[agentId]", params: { agentId: "agent-id" } });
+  expect(hasConsent("https://bot.example.com", "agent-id")).toBe(false);
+  grantConsent("https://bot.example.com", "agent-id");
+  changeConsent("https://bot.example.com", "agent-id", false);
+  expect(hasConsent("https://bot.example.com", "agent-id")).toBe(false);
+});

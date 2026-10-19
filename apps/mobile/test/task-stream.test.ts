@@ -10,6 +10,7 @@ const runtime = vi.hoisted(() => ({
   subscriptions: [] as { options: StreamOptions; close: ReturnType<typeof vi.fn> }[],
   connection: { origin: "https://one.example.com", token: "phone-session" },
   open: vi.fn(), invalidate: vi.fn(), signOut: vi.fn().mockResolvedValue(undefined),
+  focused: true, appState: undefined as ((state: string) => void) | undefined,
 }));
 vi.mock("react", () => ({
   useRef: (initial: unknown) => {
@@ -34,6 +35,10 @@ vi.mock("react", () => ({
   },
 }));
 vi.mock("@tanstack/react-query", () => ({ useQueryClient: () => client }));
+vi.mock("expo-router", () => ({ useIsFocused: () => runtime.focused }));
+vi.mock("react-native", () => ({ AppState: { currentState: "active", addEventListener: (_type: string, listener: (state: string) => void) => {
+  runtime.appState = listener; return { remove: vi.fn() };
+} } }));
 vi.mock("../src/session", () => ({
   useSignedIn: () => ({ connection: runtime.connection }), useSession: () => ({ signOut: runtime.signOut }),
 }));
@@ -53,6 +58,7 @@ function event(seq: number, kind: "assistant_text" | "state" | "run" | "owner_re
 }
 beforeEach(() => {
   vi.clearAllMocks(); runtime.slots = []; runtime.effects = []; runtime.subscriptions = []; runtime.index = 0;
+  runtime.focused = true; runtime.appState = undefined;
   runtime.connection = { origin: "https://one.example.com", token: "phone-session" };
   runtime.open.mockImplementation((options: StreamOptions) => {
     const close = vi.fn(); runtime.subscriptions.push({ options, close }); return close;
@@ -101,4 +107,18 @@ it("exposes stopped errors, clears them when live, and signs out on an expired s
   expect(render("task-a")).toMatchObject({ error, connection: "stopped" });
   options.onState("live"); expect(render("task-a")).toMatchObject({ error: null, connection: "live" });
   options.onSignedOut(); expect(runtime.signOut).toHaveBeenCalledExactlyOnceWith("This phone was signed out. Sign in again.");
+});
+it("closes the stream while the chat is hidden or the app is in the background, and continues from the last event", () => {
+  render("task-a"); const first = subscription(); first.options.onEvent(event(1)); render("task-a");
+  runtime.appState?.("background"); render("task-a");
+  expect(first.close).toHaveBeenCalledOnce();
+  expect(runtime.subscriptions).toHaveLength(1);
+  runtime.appState?.("inactive"); render("task-a");
+  const resumed = subscription(); expect(resumed.options.lastSeq).toBe(1);
+  runtime.focused = false; render("task-a");
+  expect(resumed.close).toHaveBeenCalledOnce();
+  runtime.focused = true; render("task-a");
+  expect(runtime.subscriptions).toHaveLength(3);
+  expect(subscription().options.lastSeq).toBe(1);
+  expect(render("task-a").events).toEqual([event(1)]);
 });

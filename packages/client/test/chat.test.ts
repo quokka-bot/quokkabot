@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { askedLine, chatItems, describeStep, sitesLine, timeLabel, workingStatus } from "../src/index.js";
-import { at, attachment, domainRequestId, envelopes, ownerRequest, run, taskId } from "./fixtures.js";
+import { askedLine, chatItems, describeStep, liveTask, sitesLine, timeLabel, workingStatus } from "../src/index.js";
+import { at, attachment, domainRequestId, envelope, envelopes, ownerRequest, run, task, taskId } from "./fixtures.js";
 
 it("folds the line before a card, keeps the answer after it, and shows a run's last line when it ended on work", () => {
   const events = [
@@ -170,5 +170,18 @@ describe("chat labels", () => {
     expect(timeLabel(date.toISOString(), new Date(2026, 9, 17, 22))).toBe(`Today ${time}`);
     expect(timeLabel(date.toISOString(), new Date(2026, 9, 18, 1))).toBe(`Yesterday ${time}`);
     expect(timeLabel(date.toISOString(), new Date(2026, 9, 20))).toBe(`${date.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`);
+  });
+});
+
+describe("live task state", () => {
+  const state = (seq: number, value: "running" | "completed") => envelope({ kind: "state", state: value, blockedReason: null }, seq);
+  it("takes a state event the stream delivered after the snapshot", () => {
+    expect(liveTask(task, 4, [state(5, "completed")]).state).toBe("completed");
+  });
+  it("keeps the snapshot when the stream's latest state is older or the same", () => {
+    const finished = { ...task, state: "completed" as const };
+    expect(liveTask(finished, 9, [state(3, "running")]).state).toBe("completed");
+    expect(liveTask(finished, 3, [state(3, "running")]).state).toBe("completed");
+    expect(liveTask(finished, 9, [])).toBe(finished);
   });
 });

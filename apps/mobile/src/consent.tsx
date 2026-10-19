@@ -49,10 +49,19 @@ export function useConsent(agentId: string): boolean {
   return useSyncExternalStore((listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => hasConsent(connection.origin, agentId));
 }
 
+const askConsent = (agentId: string) => router.push({ pathname: "/consent/[agentId]", params: { agentId } });
+
 // Runs `send` when the owner has allowed this agent's provider, else opens the permission screen first.
 export function withConsent(origin: string, agentId: string, send: () => void): void {
   if (hasConsent(origin, agentId)) { send(); return; }
-  router.push({ pathname: "/consent/[agentId]", params: { agentId } });
+  askConsent(agentId);
+}
+
+// The Settings switch. On opens the permission screen, the same one a first send opens, and only its Allow button
+// grants; off withdraws at once.
+export function changeConsent(origin: string, agentId: string, on: boolean): void {
+  if (on) askConsent(agentId);
+  else revokeConsent(origin, agentId);
 }
 
 export function ConsentSettings() {
@@ -68,7 +77,7 @@ export function ConsentSettings() {
         return <View key={agent.id} style={styles.row}>
           <View style={styles.text}><Text style={styles.name}>{agent.name}</Text><Text style={styles.meta}>{PROVIDER.name}</Text></View>
           <Switch accessibilityLabel={`Send to ${PROVIDER.name} for ${agent.name}`} value={on}
-            onValueChange={(value) => value ? grantConsent(connection.origin, agent.id) : revokeConsent(connection.origin, agent.id)} />
+            onValueChange={(value) => changeConsent(connection.origin, agent.id, value)} />
         </View>;
       })}
     </View>
