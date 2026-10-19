@@ -1,5 +1,7 @@
 # Quokka Bot
 
+[![CI](https://github.com/quokka-bot/quokkabot/actions/workflows/ci.yml/badge.svg)](https://github.com/quokka-bot/quokkabot/actions/workflows/ci.yml)
+
 An open-source agent with its own cloud computer. Each agent works in its own isolated desktop with a browser,
 a workspace and the official Claude Code CLI, on the owner's existing Claude plan. It signs in to sites with logins
 the owner saved (it types them without ever seeing them), asks before it reaches a new site, and hands the browser
