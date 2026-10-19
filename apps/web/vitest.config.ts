@@ -3,7 +3,10 @@ import { defineProject } from "vitest/config";
 
 export default defineProject({
   resolve: {
-    alias: { "@quokkabot/shared": fileURLToPath(new URL("../../packages/shared/src/index.ts", import.meta.url)) },
+    alias: {
+      "@quokkabot/client": fileURLToPath(new URL("../../packages/client/src/index.ts", import.meta.url)),
+      "@quokkabot/shared": fileURLToPath(new URL("../../packages/shared/src/index.ts", import.meta.url)),
+    },
   },
   test: {
     name: "web",

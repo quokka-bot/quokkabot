@@ -1,10 +1,10 @@
 import { z } from "zod";
 import {
   Attachment, ClaudeSignInCode, ClaudeSignInStart, ClaudeSignInStatus, AddDomainRuleRequest, AgentSettingsRequest, AgentSummary, AgentsResponse, CreateAgentRequest, ApiError, AttendedRequest,
-  AuditPage, AuthVerifyRequest, ComputerView, ControlLease, CreateTaskRequest,
-  DecideDomainRequest, DomainRuleView, DomainsView, FileListing, InboxItem, Me,
+  AuditPage, AuditVerification, EmptyResponse, FreshAuth, TaskPage, WebAuthnAuthenticationOptions, WebAuthnRegistrationOptions, AuthVerifyRequest, ComputerView, ControlLease, CreateTaskRequest,
+  DecideDomainRequest, DomainRuleView, DomainsView, SafeFileListing, InboxResponse, Me,
   RelPath, ReplyRequest, ReactionRequest, type ReactionEmoji, SetupOptionsRequest, SetupVerifyRequest, TakeoverDoneRequest,
-  TakeoverRequest, Task, TaskDetail, TaskEventEnvelope, TerminalClientFrame, TerminalServerFrame,
+  TakeoverRequest, Task, TaskDetail, TerminalClientFrame, TerminalServerFrame,
   ViewTicketResponse, DesktopLinkPending, DesktopLinkDecideRequest, DesktopLinkApproveVerifyRequest,
   SessionView, LoginView, SaveLoginRequest, UpdateLoginRequest, ConnectorsResponse, ConnectStartResponse } from "@quokkabot/shared";
 import type { PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/browser";
@@ -30,51 +30,6 @@ export function validate<T>(schema: z.ZodType<T>, data: unknown, context: string
   }
   return parsed.data;
 }
-
-// These wire shapes have route comments but no shared response schemas yet.
-const CredentialDescriptor = z.object({
-  id: z.string().min(1), type: z.literal("public-key"),
-  transports: z.array(z.enum(["ble", "cable", "hybrid", "internal", "nfc", "smart-card", "usb"])).optional(),
-});
-const UserVerification = z.enum(["required", "preferred", "discouraged"]);
-const CredentialHints = z.array(z.enum(["hybrid", "security-key", "client-device"]));
-const AuthenticationExtensions = z.object({
-  appid: z.string().optional(), credProps: z.boolean().optional(), hmacCreateSecret: z.boolean().optional(),
-  minPinLength: z.boolean().optional(),
-}).passthrough();
-const AuthenticationOptions = z.object({
-  challenge: z.string().min(1), timeout: z.number().positive().optional(), rpId: z.string().min(1).optional(),
-  allowCredentials: z.array(CredentialDescriptor).optional(), userVerification: UserVerification.optional(),
-  hints: CredentialHints.optional(), extensions: AuthenticationExtensions.optional(),
-}).passthrough();
-const RegistrationOptions = z.object({
-  challenge: z.string().min(1), rp: z.object({ id: z.string().optional(), name: z.string() }),
-  user: z.object({ id: z.string().min(1), name: z.string(), displayName: z.string() }),
-  pubKeyCredParams: z.array(z.object({ type: z.literal("public-key"), alg: z.number().int() })).min(1),
-  timeout: z.number().positive().optional(), excludeCredentials: z.array(CredentialDescriptor).optional(),
-  authenticatorSelection: z.object({
-    authenticatorAttachment: z.enum(["platform", "cross-platform"]).optional(),
-    requireResidentKey: z.boolean().optional(), residentKey: z.enum(["required", "preferred", "discouraged"]).optional(),
-    userVerification: UserVerification.optional(),
-  }).optional(), attestation: z.enum(["none", "direct", "indirect", "enterprise"]).optional(),
-  hints: CredentialHints.optional(), extensions: AuthenticationExtensions.optional(),
-  attestationFormats: z.array(z.enum(["fido-u2f", "packed", "android-safetynet", "android-key", "tpm", "apple", "none"])).optional(),
-}).passthrough();
-const FreshAuth = z.object({ freshUntil: z.string().datetime({ offset: true }) });
-const EmptyResponse = z.union([z.null(), z.object({}).strict()]);
-const AuditVerification = z.discriminatedUnion("ok", [
-  z.object({ ok: z.literal(true), count: z.number().int().nonnegative(), head: z.string().regex(/^[0-9a-f]{64}$/) }),
-  z.object({ ok: z.literal(false), count: z.number().int().nonnegative(), failedAtSeq: z.number().int(), reason: z.string() }),
-]);
-const Inbox = z.object({ items: z.array(InboxItem) });
-const TaskPage = z.object({ tasks: z.array(Task), nextBefore: z.string().nullable() });
-const SafeFileListing = FileListing.superRefine((listing, context) => {
-  for (const [index, entry] of listing.entries.entries()) {
-    if (!RelPath.safeParse(entry.path).success) {
-      context.addIssue({ code: "custom", path: ["entries", index, "path"], message: "expected a path inside the file root" });
-    }
-  }
-});
 
 const agentGenerations = new Map<string, number>();
 function agentHeaders(path: string): Record<string, string> {
@@ -139,14 +94,14 @@ export const api = {
   submitClaudeSignIn: (id: string, code: string) => request(`/claude-sign-in/${encodeURIComponent(id)}/code`, ClaudeSignInStatus, "POST", ClaudeSignInCode.parse({ code })),
   cancelClaudeSignIn: (id: string) => request(`/claude-sign-in/${encodeURIComponent(id)}`, EmptyResponse, "DELETE"),
   me: () => request("/me", Me),
-  setupOptions: async (ticket: string) => await request("/setup/options", RegistrationOptions, "POST", SetupOptionsRequest.parse({ ticket })) as PublicKeyCredentialCreationOptionsJSON,
+  setupOptions: async (ticket: string) => await request("/setup/options", WebAuthnRegistrationOptions, "POST", SetupOptionsRequest.parse({ ticket })) as PublicKeyCredentialCreationOptionsJSON,
   setupVerify: (ticket: string, response: unknown) => request("/setup/verify", Me, "POST", SetupVerifyRequest.parse({ ticket, response })),
-  authOptions: async (fresh = false) => await request(fresh ? "/auth/fresh/options" : "/auth/options", AuthenticationOptions, "POST", {}) as PublicKeyCredentialRequestOptionsJSON,
+  authOptions: async (fresh = false) => await request(fresh ? "/auth/fresh/options" : "/auth/options", WebAuthnAuthenticationOptions, "POST", {}) as PublicKeyCredentialRequestOptionsJSON,
   authVerify: (response: unknown) => request("/auth/verify", Me, "POST", AuthVerifyRequest.parse({ response })),
   freshVerify: (response: unknown) => request("/auth/fresh/verify", FreshAuth, "POST", AuthVerifyRequest.parse({ response })),
   logout: () => request("/auth/logout", EmptyResponse, "POST", {}),
   desktopLink: (userCode: string) => request(`/desktop-link/pending${queryString({ code: DesktopLinkDecideRequest.parse({ userCode }).userCode })}`, DesktopLinkPending),
-  desktopLinkOptions: async (userCode: string) => await request("/desktop-link/approve/options", AuthenticationOptions, "POST", DesktopLinkDecideRequest.parse({ userCode })) as PublicKeyCredentialRequestOptionsJSON,
+  desktopLinkOptions: async (userCode: string) => await request("/desktop-link/approve/options", WebAuthnAuthenticationOptions, "POST", DesktopLinkDecideRequest.parse({ userCode })) as PublicKeyCredentialRequestOptionsJSON,
   approveDesktopLink: (userCode: string, response: unknown) => request("/desktop-link/approve/verify", EmptyResponse, "POST", DesktopLinkApproveVerifyRequest.parse({ userCode, response })),
   refuseDesktopLink: (userCode: string) => request("/desktop-link/refuse", EmptyResponse, "POST", DesktopLinkDecideRequest.parse({ userCode })),
   sessions: () => request("/sessions", z.object({ sessions: z.array(SessionView) })),
@@ -166,7 +121,7 @@ export const api = {
   createAgent: async (name: string) => rememberAgent(await request("/agents", AgentSummary, "POST", CreateAgentRequest.parse({ name }))),
   removeAgent: (id: string) => request(agentPath(id), EmptyResponse, "DELETE"),
   agent: async (id: string) => rememberAgent(await request(agentPath(id), AgentSummary)),
-  inbox: () => request("/inbox", Inbox),
+  inbox: () => request("/inbox", InboxResponse),
   settings: async (id: string, model: string, effort: string, name?: string) => rememberAgent(await request(`${agentPath(id)}/settings`, AgentSummary, "PUT", AgentSettingsRequest.parse({ model, effort, ...(name === undefined ? {} : { name }) }))),
   computer: (id: string, action: "start" | "stop") => request(`${agentPath(id)}/computer/${action}`, ComputerView, "POST", {}),
   kill: (id: string) => request(`${agentPath(id)}/kill`, ComputerView, "POST", {}),
@@ -231,7 +186,6 @@ export const api = {
 export const fileDownloadUrl = (id: string) => `/api/files/${encodeURIComponent(id)}/content`;
 export const workspaceDownloadUrl = (id: string, path: string) => `/api${agentPath(id)}/workspace-file${queryString({ path: RelPath.parse(path) })}`;
 export const taskEventsUrl = (id: string, after: number) => `/api${taskPath(id)}/events?after=${after}`;
-export const parseTaskEvent = (data: string) => validate(TaskEventEnvelope, JSON.parse(data) as unknown, "Task event");
 export const parseTerminalFrame = (data: string) => validate(TerminalServerFrame, JSON.parse(data) as unknown, "Terminal frame");
 export const encodeTerminalFrame = (frame: TerminalClientFrame) => JSON.stringify(TerminalClientFrame.parse(frame));
 export function terminalUrl(id: string, location: Pick<Location, "origin" | "protocol"> = window.location): string {

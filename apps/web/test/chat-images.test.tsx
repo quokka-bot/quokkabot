@@ -4,9 +4,9 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Attachment, MAX_IMAGE_BYTES } from "@quokkabot/shared";
 import { api } from "../src/api.js";
-import { Composer, chatItems } from "../src/chat.js";
+import { Composer } from "../src/chat.js";
 import { OwnerImages, prepareImage } from "../src/chat-images.js";
-import { agent, ownerRequest, task, taskId, at } from "./fixtures.js";
+import { agent, ownerRequest, task, taskId } from "./fixtures.js";
 
 const attachment = Attachment.parse({ id: "66666666-6666-4666-8666-666666666666", name: "screen.png", mediaType: "image/png", bytes: 10, width: 10, height: 10 });
 const imageFile = (name = "screen.png") => new File([new Uint8Array([1, 2, 3])], name, { type: "image/png" });
@@ -166,9 +166,6 @@ describe("composer images", () => {
 });
 
 describe("owner image bubbles", () => {
-  it("carries image metadata through the chat event projection", () => {
-    expect(chatItems([{ taskId: taskId as never, seq: 1, at, event: { kind: "owner_message", text: "", attachments: [attachment] } }])[0]).toMatchObject({ kind: "owner", attachments: [attachment] });
-  });
   it("renders thumbnails and opens and closes a full-size in-app viewer", () => {
     render(<OwnerImages attachments={[attachment]} />);
     const thumbnail = screen.getByRole("img", { name: "screen.png" });
