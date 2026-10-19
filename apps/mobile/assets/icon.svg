@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- The Mac icon's artwork, full bleed: iOS draws the rounded corners itself and refuses transparency. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2E5BFF"/>
+      <stop offset="1" stop-color="#1A2F7A"/>
+    </linearGradient>
+    <linearGradient id="sheet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E6ECFF"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#0A1640" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <g transform="translate(512 512) scale(1.18) translate(-512 -512)">
+    <g filter="url(#shadow)">
+      <path d="M340 236 h262 l118 118 v390 a44 44 0 0 1 -44 44 h-336 a44 44 0 0 1 -44 -44 v-464 a44 44 0 0 1 44 -44 z" fill="url(#sheet)"/>
+      <path d="M602 236 v88 a30 30 0 0 0 30 30 h88 z" fill="#B9C7FF"/>
+    </g>
+    <rect x="378" y="420" width="230" height="26" rx="13" fill="#9FB1F5"/>
+    <rect x="378" y="476" width="268" height="26" rx="13" fill="#9FB1F5"/>
+    <circle cx="660" cy="690" r="118" fill="#22C38E" stroke="#FFFFFF" stroke-width="22"/>
+    <path d="M606 690 l38 38 l74 -82" fill="none" stroke="#FFFFFF" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

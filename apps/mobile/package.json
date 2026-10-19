@@ -1,0 +1,48 @@
+{
+  "name": "@quokkabot/mobile",
+  "version": "0.0.0",
+  "license": "MIT",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "build": "expo export --platform ios --output-dir dist --no-minify",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "ios": "APP_VARIANT=development expo run:ios",
+    "eas:dev": "eas build --profile development --platform ios",
+    "eas:preview": "eas build --profile preview --platform ios",
+    "eas:production": "eas build --profile production --platform ios"
+  },
+  "dependencies": {
+    "@quokkabot/client": "workspace:*",
+    "@quokkabot/shared": "workspace:*",
+    "@tanstack/react-query": "5.104.3",
+    "expo": "58.0.16",
+    "expo-camera": "58.0.11",
+    "expo-clipboard": "58.0.3",
+    "expo-constants": "58.0.12",
+    "expo-dev-client": "58.0.14",
+    "expo-device": "58.0.5",
+    "expo-file-system": "58.0.10",
+    "expo-linking": "58.0.13",
+    "expo-mail-composer": "58.0.3",
+    "expo-router": "58.0.24",
+    "expo-secure-store": "58.0.2",
+    "expo-splash-screen": "58.0.10",
+    "expo-status-bar": "58.0.3",
+    "expo-updates": "58.0.17",
+    "expo-web-browser": "58.0.6",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.0",
+    "react-native-passkeys": "0.4.2",
+    "react-native-safe-area-context": "5.10.1",
+    "react-native-screens": "4.30.0",
+    "react-native-webview": "14.0.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@expo/fingerprint": "0.21.5",
+    "@types/react": "19.3.0"
+  }
+}
