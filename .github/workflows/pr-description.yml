@@ -1,0 +1,24 @@
+name: PR description
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  agent-info:
+    name: Harness, model and effort
+    # Dependabot and other apps write no description of their own.
+    if: github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node scripts/check-pr-description.mjs
