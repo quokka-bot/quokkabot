@@ -45,7 +45,8 @@ describe("new app version", () => {
     expect((await screen.findByRole("status")).textContent).toContain("Quokka Bot was updated.");
     expect(reload).not.toHaveBeenCalled();
     blur();
-    expect(reload).toHaveBeenCalledTimes(1);
+    // The reload runs from an effect, which can land just after the blur event.
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
     expect(sessionStorage.getItem("quokkabot-reloaded-for")).toBe(deployed);
   });
 
