@@ -1014,7 +1014,7 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     // Collected once only.
     expect((await api("POST", "/api/desktop-link/poll", { pollToken }, { cookie: false })).status).toBe(410);
     const devices = await api("GET", "/api/sessions");
-    expect(devices.body.sessions.map((d: { deviceName: string }) => d.deviceName)).toContain("Test Mac");
+    expect(devices.body.sessions).toContainEqual(expect.objectContaining({ deviceName: "Test Mac", client: "desktop" }));
 
     // Fresh re-check for the desktop session through the browser.
     await db.query("update sessions set fresh_until = null where hash = $1", [sha256Hex(desktopToken)]);
@@ -1319,6 +1319,11 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     expect((await api("GET", "/api/me", undefined, { cookie: false, headers: bearer(used.token) })).status).toBe(200);
     const slid = await db.query<{ days: number }>("select (extract(epoch from expires_at - now()) / 86400)::float8 as days from sessions where hash = $1", [sha256Hex(used.token)]);
     expect(slid.rows[0]!.days).toBeGreaterThan(29.9);
+    // Used again within a day of the last renewal: still 30 days from this use.
+    const recent = await phoneSession({ expires: "29 days 12 hours" });
+    await api("GET", "/api/me", undefined, { cookie: false, headers: bearer(recent.token) });
+    const recentDays = await db.query<{ days: number }>("select (extract(epoch from expires_at - now()) / 86400)::float8 as days from sessions where hash = $1", [sha256Hex(recent.token)]);
+    expect(recentDays.rows[0]!.days).toBeGreaterThan(29.99);
     const capped = await phoneSession({ expires: "2 days", absolute: "3 days" });
     await api("GET", "/api/me", undefined, { cookie: false, headers: bearer(capped.token) });
     const cappedDays = await db.query<{ days: number }>("select (extract(epoch from expires_at - now()) / 86400)::float8 as days from sessions where hash = $1", [sha256Hex(capped.token)]);

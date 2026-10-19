@@ -233,13 +233,12 @@ export class Auth {
     if (!token || token.length > 100) return null;
     const hash = sha256Hex(token);
     // Also records when the device was last seen (at most every five minutes), for the signed-in devices list, and
-    // moves a phone session's expiry forward (at most once a day, never past its absolute end).
+    // moves a phone session's expiry to 30 days from now on every use, never past its absolute end.
     const row = await maybeOne<{ hash: string; fresh_until: Date | null; client: SessionClient }>(
       this.db,
       `update sessions set
          last_seen_at = case when last_seen_at is null or last_seen_at < now() - interval '5 minutes' then now() else last_seen_at end,
-         expires_at = case when client = 'phone' and expires_at < now() + $3::interval - interval '1 day'
-           then least(absolute_expires_at, now() + $3::interval) else expires_at end
+         expires_at = case when client = 'phone' then least(absolute_expires_at, now() + $3::interval) else expires_at end
        where hash = $1 and expires_at > now() and revoked_at is null and (client = 'phone') = $2
        returning hash, fresh_until, client`,
       [hash, transport === "bearer", `${PHONE_IDLE_DAYS} days`],

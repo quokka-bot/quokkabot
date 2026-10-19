@@ -123,6 +123,16 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   const requestLog = log.child({}, { serializers: { req: serializeRequest } });
   const app = Fastify({ loggerInstance: requestLog as never, trustProxy: true, bodyLimit: 1024 * 1024 }) as unknown as FastifyInstance;
   void app.register(cookie);
+  // Requests per client address (Caddy passes it on). Every route has a ceiling; the routes that work without a
+  // session (setup, sign-in, desktop link, OAuth callback) have a tight one.
+  // Awaited and first: the plugin attaches its limit to each route as the route is added, so it is loaded before any
+  // route or hook. Each route checks its limit in onRequest, before the preHandler hook below reads a session.
+  await app.register(rateLimit, {
+    global: true,
+    max: 1200,
+    timeWindow: "1 minute",
+    errorResponseBuilder: (_request, context) => new HttpError(429, "rate_limited", `Too many requests. Try again in ${context.after}.`),
+  });
   app.decorateRequest("session", null);
   app.addContentTypeParser(ImageMediaType.options, { parseAs: "buffer" }, (_request, body, done) => done(null, body));
   app.decorateRequest("releaseAgent", null);
@@ -233,15 +243,6 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   });
 
   const appRoute = { constraints: { host: config.appHost } };
-  // Requests per client address (Caddy passes it on). Every route has a ceiling; the routes that work without a
-  // session (setup, sign-in, desktop link, OAuth callback) have a tight one.
-  // Awaited: the plugin attaches its limits to routes as they are added, so it must be loaded before any route.
-  await app.register(rateLimit, {
-    global: true,
-    max: 1200,
-    timeWindow: "1 minute",
-    errorResponseBuilder: (_request, context) => new HttpError(429, "rate_limited", `Too many requests. Try again in ${context.after}.`),
-  });
   const signInRoute = { ...appRoute, config: { rateLimit: { max: 30, timeWindow: "1 minute" } } };
   const viewRoute = { constraints: { host: config.viewHost } };
 
