@@ -53,14 +53,14 @@ export function privacyPage(appOrigin: string, contact: string | null): string {
 <p class="muted">Quokka Bot on ${escapeHtml(new URL(appOrigin).host)}</p>
 <p>Quokka Bot runs on its owner's own server for the owner alone. The software sends nothing to Quokka Bot's makers, and nothing here is sold.</p>
 <h2>What the AI model sees</h2>
-<p>The agent runs Claude Code signed in with the owner's own Claude plan, so Anthropic receives what the agent works with: the owner's messages and images, pages it opens, files it reads, command output and email it reads. Anthropic's terms for that plan apply. Saved passwords, 2FA codes and access tokens never reach the model.</p>
+<p>The agent runs Claude Code signed in with the owner's own Claude plan. Anthropic receives what the agent works with: the owner's messages and images, pages it opens, files it reads, command output and email it reads. Anthropic's terms for that plan apply. Saved passwords, 2FA codes and access tokens never reach the model.</p>
 <h2>Google account data</h2>
 <p>When the owner connects Gmail, Quokka Bot receives access to that Gmail account through Google's own consent page. It uses it only to do what the owner asks the agent to do:</p>
 <ul><li>search and read messages the task needs,</li><li>create drafts, which stay in Drafts until the owner sends them.</li></ul>
 <p>The refresh token is stored encrypted on this server and is never shown to the AI model. The owner can disconnect at any time in Quokka Bot (Connected apps), which deletes it here and revokes it at Google.</p>
-<p>Quokka Bot's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements. Gmail data goes only to the AI model working on the owner's own task, is never used for advertising and is never sold.</p>
+<p>Quokka Bot's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements. Gmail data goes to the AI model working on the owner's own task. The start of each message the agent reads, and what the agent writes about it, are saved with the task on this server and in the encrypted backups when the owner turns them on. Gmail data is never used for advertising and is never sold.</p>
 <h2>Other data</h2>
-<p>Tasks, files, browser data, saved logins and the activity log are stored on this server. Saved passwords and 2FA secrets are encrypted, and Quokka Bot types them into sites without the AI model seeing them. If the owner turns on backups, encrypted copies go to a storage bucket the owner chooses.</p>
+<p>Tasks, files, browser data, saved logins and the activity log are stored on this server. Saved passwords and 2FA secrets are encrypted. Quokka Bot types them into sites; the AI model never sees them. If the owner turns on backups, encrypted copies go to a storage bucket the owner chooses.</p>
 <p>The full list of what Quokka Bot stores and sends, and to whom: <a href="https://quokkabot.com/privacy">quokkabot.com/privacy</a>.</p>
 ${contact ? `<h2>Contact</h2><p><a href="mailto:${escapeHtml(contact)}">${escapeHtml(contact)}</a></p>` : ""}
 <footer><a href="${escapeHtml(appOrigin)}/about">About</a></footer>`, false);

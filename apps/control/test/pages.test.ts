@@ -11,6 +11,9 @@ it("names the AI provider, keeps the Google Limited Use statement and links to t
   expect(page).toContain("The refresh token is stored encrypted");
   expect(page).toContain('href="https://quokkabot.com/privacy"');
   expect(page).not.toContain("stay on this server");
+  // Gmail text the agent reads is kept with the task (its activity), so the page must not say it goes only to the model.
+  expect(page).toContain("saved with the task on this server and in the encrypted backups");
+  expect(page).not.toContain("goes only to the AI model");
 });
 
 it("shows the contact address escaped and leaves the section out without one", () => {
