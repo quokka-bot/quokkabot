@@ -1,28 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2E5BFF"/>
-      <stop offset="1" stop-color="#1A2F7A"/>
+    <linearGradient id="tile" x1="300" y1="100" x2="700" y2="924" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8351e4"/>
+      <stop offset="0.6" stop-color="#7442d1"/>
+      <stop offset="1" stop-color="#6534c4"/>
     </linearGradient>
-    <linearGradient id="sheet" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#E6ECFF"/>
-    </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#0A1640" flood-opacity="0.45"/>
-    </filter>
   </defs>
-  <!-- macOS icon grid: 824 px body centred on a 1024 canvas -->
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
-  <!-- the document -->
-  <g filter="url(#shadow)">
-    <path d="M340 236 h262 l118 118 v390 a44 44 0 0 1 -44 44 h-336 a44 44 0 0 1 -44 -44 v-464 a44 44 0 0 1 44 -44 z" fill="url(#sheet)"/>
-    <path d="M602 236 v88 a30 30 0 0 0 30 30 h88 z" fill="#B9C7FF"/>
-  </g>
-  <!-- lines of text -->
-  <rect x="378" y="420" width="230" height="26" rx="13" fill="#9FB1F5"/>
-  <rect x="378" y="476" width="268" height="26" rx="13" fill="#9FB1F5"/>
-  <!-- the agent's check mark: done, with proof -->
-  <circle cx="660" cy="690" r="118" fill="#22C38E" stroke="#FFFFFF" stroke-width="22"/>
-  <path d="M606 690 l38 38 l74 -82" fill="none" stroke="#FFFFFF" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+  <path d="M330 408c-48-17-72-60-62-113 9-49 45-73 79-50 33 22 43 67 36 101 81-35 177-35 258 0-7-34 3-79 36-101 34-23 70 1 79 50 10 53-14 96-62 113 58 48 95 111 95 182 0 126-113 210-277 210S235 716 235 590c0-71 37-134 95-182z" fill="#fcfcfc"/>
+  <path d="M329 351c-24-10-35-30-29-55 4-18 14-24 25-12 15 16 20 42 16 60-1 6-6 9-12 7zM695 351c24-10 35-30 29-55-4-18-14-24-25-12-15 16-20 42-16 60 1 6 6 9 12 7z" fill="#bca0ee"/>
+  <ellipse cx="512" cy="636" rx="164" ry="120" fill="#ede5fa"/>
+  <circle cx="401" cy="492" r="31" fill="#39205c"/><circle cx="410" cy="482" r="9" fill="#fcfcfc"/>
+  <circle cx="623" cy="492" r="31" fill="#39205c"/><circle cx="632" cy="482" r="9" fill="#fcfcfc"/>
+  <path d="M473 551c16-12 62-12 78 0 9 7 9 18 1 26l-23 20c-10 9-24 9-34 0l-23-20c-8-8-8-19 1-26z" fill="#39205c"/>
+  <path d="M402 626c63 53 157 53 220 0-14 49-55 77-110 77s-96-28-110-77z" fill="#39205c"/>
 </svg>
