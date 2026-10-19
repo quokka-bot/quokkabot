@@ -402,6 +402,8 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   app.post("/api/desktop-link/start", signInRoute, async (request) => {
     const body = parse(DesktopLinkStartRequest, request.body);
     const requester = body.kind === "fresh" ? await requireSession(request) : null;
+    // The re-check through the browser is for the Mac app. A phone session never becomes fresh.
+    if (requester?.client === "phone") throw new HttpError(403, "phone_not_fresh", "Confirm this in the web app or the Mac app.");
     return desktopLinks.start(body.kind, body.deviceName, requester?.hash ?? null);
   });
   app.get<{ Querystring: { code?: string } }>("/api/desktop-link/pending", appRoute, async (request) => {

@@ -1308,8 +1308,15 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     const killed = await api("POST", `/api/agents/${AGENT}/kill`, {}, { cookie: false, origin: null, headers: bearer("not-a-session-token-at-all"), extraCookie: `qb_kill=${killCapability(killSecret, 1)}` });
     expect(killed.status).toBe(401);
     expect(supervisorCalls).not.toContain(`POST /v1/agents/${AGENT}/computer/kill`);
-    // A phone session never counts as a fresh passkey check.
+    // A phone session never counts as a fresh passkey check: it cannot start the browser re-check, and a fresh_until on
+    // its row is ignored.
     expect((await api("POST", `/api/agents/${AGENT}/kill/release`, {}, asPhone)).body.error.code).toBe("fresh_auth_required");
+    const recheck = await api("POST", "/api/desktop-link/start", { kind: "fresh", deviceName: "Test Mac" }, asPhone);
+    expect(recheck.status).toBe(403);
+    expect(recheck.body.error.code).toBe("phone_not_fresh");
+    await db.query("update sessions set fresh_until = now() + interval '10 minutes' where hash = $1", [sha256Hex(phone.token)]);
+    expect((await api("POST", `/api/agents/${AGENT}/kill/release`, {}, asPhone)).body.error.code).toBe("fresh_auth_required");
+    expect((await api("GET", "/api/me", undefined, asPhone)).body.freshUntil).toBeNull();
     const devices = await api("GET", "/api/sessions");
     expect(devices.body.sessions).toContainEqual(expect.objectContaining({ id: phone.id, deviceName: "Test iPhone", client: "phone", current: false }));
   });

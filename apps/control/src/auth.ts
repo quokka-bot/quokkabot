@@ -243,7 +243,8 @@ export class Auth {
        returning hash, fresh_until, client`,
       [hash, transport === "bearer", `${PHONE_IDLE_DAYS} days`],
     );
-    return row ? { hash: row.hash, freshUntil: row.fresh_until, client: row.client } : null;
+    // A phone session never counts as a fresh passkey check, whatever its row says.
+    return row ? { hash: row.hash, freshUntil: row.client === "phone" ? null : row.fresh_until, client: row.client } : null;
   }
 
   async devices(currentHash: string): Promise<{ id: string; deviceName: string; client: SessionClient; createdAt: string; lastSeenAt: string | null; current: boolean }[]> {
