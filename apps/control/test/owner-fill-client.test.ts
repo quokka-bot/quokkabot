@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OwnerFillRequest } from "@quokkabot/shared";
 import { BrowserServiceClient, UpstreamError } from "../src/clients.js";
 
-const request: OwnerFillRequest = { commandId: "owner_command", leaseGeneration: 9, kind: "code", value: "native-client-canary", expectedOrigin: "https://example.com", submit: true };
+const request: OwnerFillRequest = { commandId: "owner_command", leaseGeneration: 9, kind: "code", value: "native-client-canary", focusId: "a".repeat(64), submit: true };
 describe("owner browser service client", () => {
   let client: BrowserServiceClient;
   let status: number;
@@ -32,14 +32,19 @@ describe("owner browser service client", () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
   it("uses only the owner routes with the service credential and current lease generation", async () => {
-    response = { field: { kind: "code", origin: request.expectedOrigin } };
+    response = { field: { kind: "code", origin: "https://example.com", focusId: request.focusId } };
     expect(await client.ownerFocus(9)).toEqual(response);
-    response = { commandId: request.commandId, status: "ok" };
+    response = { commandId: request.commandId, status: "ok", url: "https://example.com" };
     expect(await client.ownerFill(request)).toEqual(response);
     expect(calls).toEqual([
       { method: "GET", path: "/v1/owner-focus?generation=9", authorization: "Bearer service-token", body: null },
       { method: "POST", path: "/v1/owner-fill", authorization: "Bearer service-token", body: request },
     ]);
+  });
+
+  it.each([undefined, "invalid", "https://example.com/path"])("rejects a success without a trustworthy origin %s", async (url) => {
+    response = { commandId: request.commandId, status: "ok", url };
+    await expect(client.ownerFill(request)).rejects.toThrow("owner fill failed");
   });
 
   it.each([200, 409, 500])("drops an invalid or failed fill reply's contents under HTTP %s", async (code) => {

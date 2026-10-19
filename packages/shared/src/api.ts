@@ -126,7 +126,8 @@ export type AgentsResponse = z.infer<typeof AgentsResponse>;
 // GET  /api/agents/:agentId/terminal (WebSocket)     needs fresh auth; frames are TerminalClientFrame/ServerFrame
 export const AgentSettingsRequest = z.object({ name: AgentName.optional(), model: ModelId, effort: Effort }).strict();
 export const TakeoverRequest = z.object({ action: z.enum(["take", "return"]) }).strict();
-// Native fields during the owner's takeover. Focus returns metadata only; fill returns no typed value.
+// Native fields during the owner's takeover. Fill echoes the inspected focusId, never a caller-chosen origin.
+// The browser binds that short-lived handle to the inspected lease. Neither response returns a typed value.
 export const TakeoverFocusResponse = OwnerFocusResult;
 export type TakeoverFocusResponse = z.infer<typeof TakeoverFocusResponse>;
 export const TakeoverFillRequest = OwnerFillRequest.omit({ commandId: true, leaseGeneration: true });

@@ -12,14 +12,15 @@ import {
   MUTATING_BROWSER_OPS, OwnerFillRequest, SecretFillRequest, SiteDataClearRequest, TabRef,
 } from "@quokkabot/shared";
 import type { BrowserOp, OwnerFocusResult, TabInfo } from "@quokkabot/shared";
+import { OWNER_INSERTION_WINDOW_MS } from "./cdp.js";
 import type { CdpConnection } from "./cdp.js";
 import { DownloadError, Downloads } from "./downloads.js";
 import { AGENT_BROWSER_ARGV, CHROME_PROFILE_DIR, chromeArgv, UncertainProcessError } from "./runtime.js";
 import type { Clock, ManagedProcess, ProcessRunner } from "./runtime.js";
 import { maskSnapshot } from "./snapshot.js";
 import { clearSiteData, SiteDataClearError } from "./site-data.js";
-import { fillOwner, fillSecret, focusedFields, ownerTarget, SecretFillError } from "./secret-fill.js";
-import type { SecretFillSend } from "./secret-fill.js";
+import { fillOwner, fillSecret, focusedFields, INSERT_FUNCTION, ownerTarget, SecretFillError } from "./secret-fill.js";
+import type { FocusedTarget, SecretFillSend } from "./secret-fill.js";
 
 export interface BrowserServiceDependencies {
   token: string;
@@ -52,12 +53,16 @@ interface Tab {
   // Counts top-level document loads only. A private value typed into the page blocks screenshots of that document.
   mainEpoch: number;
   secretEpoch?: number;
+  ownerEpoch?: number;
+  // Back/forward cache is disabled at launch. Refuse unexpected restores conservatively, even without a loader id.
+  hadSecret?: boolean;
+  hadOwnerFill?: boolean;
   sessionId?: string;
   frameSessions: Map<string, string>;
   snapshot?: { text: string; refs: Set<string>; passwords: Set<string>; interactiveOnly: boolean };
 }
 type CommandIdentity = Pick<BrowserCommandRequest, "commandId" | "generation"> & Partial<Pick<BrowserCommandRequest, "runId">>;
-interface Running { request: CommandIdentity; secret: boolean; done: Promise<void>; abort: AbortController; tainted: boolean; dispatched: boolean }
+interface Running { request: CommandIdentity; secret: boolean; done: Promise<void>; abort: AbortController; tainted: boolean; dispatched: boolean; insertionFence?: Promise<void> }
 class OperationError extends Error {
   constructor(readonly status: BrowserCommandResult["status"], message: string) { super(message); }
 }
@@ -126,6 +131,19 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
   const tabs = new Map<string, Tab>();
   const targetRefs = new Map<string, string>();
   let nextTab = 0;
+  type OwnerTarget = FocusedTarget & { kind: OwnerFillRequest["kind"]; send: SecretFillSend; page: Tab; documentEpoch: number };
+  const ownerFocusHandles = new Map<string, { target: OwnerTarget; generation: number; expiresAt: number; timer: ReturnType<typeof setTimeout> }>();
+  function releaseOwnerTarget(target: FocusedTarget): void {
+    if (target.objectId) void target.frameSend("Runtime.releaseObject", { objectId: target.objectId }).catch(() => undefined);
+  }
+  function discardOwnerFocus(focusId: string, release = true): void {
+    const handle = ownerFocusHandles.get(focusId);
+    if (!handle) return;
+    clearTimeout(handle.timer);
+    ownerFocusHandles.delete(focusId);
+    if (release) releaseOwnerTarget(handle.target);
+  }
+  function clearOwnerFocus(): void { for (const focusId of ownerFocusHandles.keys()) discardOwnerFocus(focusId); }
 
   // The agent-browser session's active tab, as far as this service knows. agent-browser drops every element ref on any
   // `tab` switch, even to the tab that is already active, so the service switches only when the target changes.
@@ -136,7 +154,7 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
     activeTarget = undefined;
   }
   deps.cdp.on("disconnect", () => {
-    cdpConfigured = false; ready = false; dropRefs();
+    cdpConfigured = false; ready = false; dropRefs(); clearOwnerFocus();
     for (const tab of tabs.values()) { delete tab.sessionId; tab.frameSessions.clear(); }
   });
   function sessionTab(sessionId: string | undefined): Tab | undefined {
@@ -148,9 +166,16 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
       const tab = sessionTab(sessionId);
       if (tab) {
         delete tab.snapshot; tab.documentEpoch += 1;
-        const topLevel = method === "Page.frameNavigated" && sessionId === tab.sessionId &&
-          z.object({ frame: z.object({ parentId: z.string().optional() }) }).safeParse(params).data?.frame.parentId === undefined;
-        if (topLevel) tab.mainEpoch += 1;
+        for (const [focusId, handle] of ownerFocusHandles) if (handle.target.page === tab) discardOwnerFocus(focusId);
+        const navigated = z.object({ frame: z.object({ parentId: z.string().optional() }), type: z.string().optional() }).safeParse(params);
+        const topLevel = method === "Page.frameNavigated" && sessionId === tab.sessionId && navigated.success && navigated.data.frame.parentId === undefined;
+        if (topLevel) {
+          tab.mainEpoch += 1;
+          if (navigated.data.type === "BackForwardCacheRestore") {
+            if (tab.hadSecret) tab.secretEpoch = tab.mainEpoch;
+            if (tab.hadOwnerFill) tab.ownerEpoch = tab.mainEpoch;
+          }
+        }
       }
       return;
     }
@@ -404,7 +429,7 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
     try {
       await fillSecret(send, forFrame, request, deps.env.NODE_ENV === "test");
     } finally {
-      if (context.dispatched) page.secretEpoch = epochAtFill;
+      if (context.dispatched) { page.secretEpoch = epochAtFill; page.hadSecret = true; }
     }
     return {};
   }
@@ -413,12 +438,9 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
         (lease.expiresAt !== null && Date.parse(lease.expiresAt) <= deps.clock.now().getTime())) return "no takeover";
     return undefined;
   }
-  async function ownerPages(generation: number, secret: boolean) {
-    const context = running;
+  async function ownerPages(generation: number) {
     const guardLease = (): void => {
-      if (ownerRefusal(generation) || (secret && (!context || running !== context || context.tainted || context.abort.signal.aborted))) {
-        throw new OperationError(secret ? "outcome_unknown" : "blocked", "no takeover");
-      }
+      if (ownerRefusal(generation)) throw new OperationError(running?.secret ? "outcome_unknown" : "blocked", "no takeover");
     };
     guardLease();
     const targets = z.object({ targetInfos: z.array(z.object({ targetId: z.string(), type: z.string(), url: z.string(), title: z.string().optional() })) })
@@ -439,6 +461,8 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
       const documentEpoch = page.documentEpoch;
       const session = await ensureSession(page);
       const send = async (method: string, params: Record<string, unknown> = {}, frameSession = session): Promise<unknown> => {
+        // Releasing an isolated-world handle is safe even after its lease or document ended.
+        if (method === "Runtime.releaseObject") return deps.cdp.send(method, params, frameSession);
         const guard = (): void => {
           guardLease();
           if (!(method === "Input.dispatchKeyEvent" && params.type === "keyUp") && page.documentEpoch !== documentEpoch) {
@@ -446,12 +470,28 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
           }
         };
         guard();
-        if (method.startsWith("Input.") || method === "Runtime.callFunctionOn") {
+        const insertion = method === "Runtime.callFunctionOn" && params.functionDeclaration === INSERT_FUNCTION;
+        if (method.startsWith("Input.") || insertion) {
+          const active = running;
+          if (!active?.secret || active.tainted || active.abort.signal.aborted) throw new OperationError("outcome_unknown", "no takeover");
           if (await identity() !== daemonIdentity) throw new OperationError("outcome_unknown", "browser changed during owner fill");
           guard();
-          // Mark before dispatch, including a lost reply. Enter's next document must not inherit the block.
-          if (method === "Runtime.callFunctionOn") page.secretEpoch = page.mainEpoch;
-          context!.dispatched = true;
+          active.dispatched = true;
+          if (insertion) {
+            // Mark before dispatch, including a lost reply. Enter's next document must not inherit the block.
+            page.secretEpoch = page.mainEpoch; page.ownerEpoch = page.mainEpoch;
+            page.hadSecret = true; page.hadOwnerFill = true;
+            delete page.snapshot;
+            const deadline = Number((params.arguments as { value: unknown }[])[5]!.value);
+            const reply = deps.cdp.send(method, params, frameSession);
+            // A rejected transport promise does not cancel Chrome. Join it AND the page's execution deadline,
+            // even when cancellation or disconnect makes the caller return an uncertain result.
+            active.insertionFence = Promise.all([
+              reply.then(() => undefined, () => undefined),
+              new Promise<void>((resolve) => { setTimeout(resolve, Math.max(0, deadline - Date.now())); }),
+            ]).then(() => undefined);
+            return reply;
+          }
         }
         return commandCdp(method, params, frameSession);
       };
@@ -469,19 +509,28 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
         const session = frameSession;
         return (method, params) => send(method, params, session);
       };
-      pages.push({ send, forFrame });
+      pages.push({ send, forFrame, page, documentEpoch });
     }
     guardLease();
     return pages;
   }
-  async function inspectOwner(generation: number, secret: boolean) {
-    const pages = await ownerPages(generation, secret);
+  async function inspectOwner(generation: number) {
+    const pages = await ownerPages(generation);
     const focused = [];
-    for (const page of pages) {
-      for (const field of await focusedFields(page.send, page.forFrame)) focused.push({ ...field, send: page.send });
+    const captured: FocusedTarget[] = [];
+    try {
+      for (const page of pages) {
+        for (const field of await focusedFields(page.send, page.forFrame, true, captured)) {
+          focused.push({ ...field, send: page.send, page: page.page, documentEpoch: page.documentEpoch });
+        }
+      }
+      const target = ownerTarget(focused, deps.env.NODE_ENV === "test");
+      for (const other of captured) if (other.objectId !== target.objectId || other.frameSend !== target.frameSend) releaseOwnerTarget(other);
+      return target;
+    } catch (error) {
+      for (const target of captured) releaseOwnerTarget(target);
+      throw error;
     }
-    const target = ownerTarget(focused, deps.env.NODE_ENV === "test");
-    return { target, send: target.send };
   }
   function ownerFocus(generation: number): Promise<OwnerFocusResult> {
     const inspect = queue.then(async (): Promise<OwnerFocusResult> => {
@@ -489,9 +538,16 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
       if (stopping || !await refreshReadiness()) throw new OperationError("failed", "browser not ready");
       if (ownerRefusal(generation)) throw new OperationError("blocked", "no takeover");
       try {
-        const { target } = await inspectOwner(generation, false);
-        if (ownerRefusal(generation)) throw new OperationError("blocked", "no takeover");
-        return { field: { origin: target.origin, kind: target.kind } };
+        const target = await inspectOwner(generation);
+        if (ownerRefusal(generation)) { releaseOwnerTarget(target); throw new OperationError("blocked", "no takeover"); }
+        const focusId = randomBytes(32).toString("hex");
+        const expiresAt = deps.clock.now().getTime() + 60_000;
+        const timer = setTimeout(() => discardOwnerFocus(focusId), 60_000);
+        timer.unref();
+        // Bound retained remote objects even when a client repeatedly inspects without filling.
+        if (ownerFocusHandles.size >= 128) discardOwnerFocus(ownerFocusHandles.keys().next().value!);
+        ownerFocusHandles.set(focusId, { target, generation, expiresAt, timer });
+        return { field: { origin: target.origin, kind: target.kind, focusId } };
       } catch (error) {
         if (ownerRefusal(generation)) throw new OperationError("blocked", "no takeover");
         if (error instanceof SecretFillError && error.status === "blocked") return { field: null };
@@ -507,10 +563,19 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
     const request = parsed.data;
     if (ownerRefusal(request.leaseGeneration)) return Promise.resolve({ commandId: request.commandId, status: "blocked", message: "no takeover" });
     return enqueue({ ...request, generation: request.leaseGeneration }, "owner", true, async () => {
-      const { target, send } = await inspectOwner(request.leaseGeneration, true);
-      await fillOwner(target, send, request, deps.env.NODE_ENV === "test");
-      if (ownerRefusal(request.leaseGeneration)) throw new OperationError("outcome_unknown", "no takeover");
-      return {};
+      const handle = ownerFocusHandles.get(request.focusId);
+      discardOwnerFocus(request.focusId, false);
+      if (!handle) throw new OperationError("blocked", "wrong field kind");
+      const { target } = handle;
+      try {
+        if (handle.generation !== request.leaseGeneration || handle.expiresAt <= deps.clock.now().getTime()) throw new OperationError("blocked", "wrong field kind");
+        if (target.page.documentEpoch !== target.documentEpoch || tabs.get(target.page.ref) !== target.page) throw new OperationError("blocked", "wrong site");
+        const remaining = lease.expiresAt === null ? OWNER_INSERTION_WINDOW_MS : Date.parse(lease.expiresAt) - deps.clock.now().getTime();
+        const deadline = Date.now() + Math.max(0, Math.min(OWNER_INSERTION_WINDOW_MS, remaining));
+        await fillOwner(target, target.send, request, deps.env.NODE_ENV === "test", deadline);
+        if (ownerRefusal(request.leaseGeneration)) throw new OperationError("outcome_unknown", "no takeover");
+        return { url: target.origin };
+      } finally { releaseOwnerTarget(target); }
     });
   }
   async function executeOp(request: BrowserCommandRequest): Promise<Partial<BrowserCommandResult>> {
@@ -541,6 +606,9 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
     // Switching to a discarded tab can reload it. CDP navigation events invalidate that old ref set.
     if ("ref" in op && (!tab.snapshot || op.snapshot !== tab.generation || !tab.snapshot.refs.has(op.ref))) {
       throw new OperationError("invalid", "take a new snapshot");
+    }
+    if ((op.op === "snapshot" || op.op === "screenshot") && tab.ownerEpoch === tab.mainEpoch) {
+      throw new OperationError("blocked", "snapshots and screenshots are off because the owner typed a private value into this page; load another page first");
     }
     if (op.op === "snapshot") {
       if (op.page === 1) {
@@ -691,7 +759,7 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
         const unknown = context.tainted || (mutating && !expected);
         const status = unknown ? "outcome_unknown" : expected ? error.status : "failed";
         return { commandId: identity.commandId, status, message: expected || (kind === "command" && error instanceof UncertainProcessError) ? error.message : kind === "owner" ? "owner fill failed" : kind === "secret" ? "secret fill failed" : "browser command failed" };
-      } finally { running = undefined; finish(); }
+      } finally { await context.insertionFence; running = undefined; finish(); }
     });
     const stored = command.then((result) => {
       results.set(identity.commandId, { result, fingerprint });
@@ -746,7 +814,7 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
           await waitForDaemonExit(killedPid);
         }
       }
-      dropRefs();
+      dropRefs(); clearOwnerFocus();
       lease = next;
       return { ...lease };
     }).finally(() => { leaseChanging -= 1; });
@@ -754,6 +822,7 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
     return update;
   }
   function launchChrome(): void {
+    clearOwnerFocus();
     chromeUp = false;
     ready = false;
     // This service is the only Chrome owner in the sandbox, so a profile lock left by a killed or recreated container is
@@ -792,6 +861,7 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
     ready = false;
     if (maintenance !== undefined) deps.clock.clearTimeout(maintenance);
     await queue;
+    clearOwnerFocus();
     if (chromeUp && chrome) {
       // No signal fallback: Browser.close is necessary to flush cookies before container shutdown.
       if (!deps.cdp.connected) throw new Error("Cannot close Chrome gracefully while CDP is disconnected");

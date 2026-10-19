@@ -7,7 +7,7 @@ import { UpstreamError } from "../src/clients.js";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
 const path = `/api/agents/${agentId}/takeover`;
-const body = { kind: "password", value: "owner-native-canary", expectedOrigin: "https://login.example.com", submit: false };
+const body = { kind: "password", value: "owner-native-canary", focusId: "a".repeat(64), submit: false };
 const cookieHeaders = { host: "quokkabot.test", origin: "https://quokkabot.test", cookie: "qb_session=cookie_session" };
 const token = "phone_session_token_1234567890";
 const phoneHeaders = { host: "quokkabot.test", authorization: `Bearer ${token}` };
@@ -25,8 +25,8 @@ describe("owner takeover native fields", () => {
     logs = [];
     session = vi.fn().mockImplementation(async (credential: string, kind: string) => credential === "cookie_session" && kind === "cookie" ? { hash: "owner" } : null);
     audit = vi.fn();
-    ownerFill = vi.fn().mockResolvedValue({ commandId: "owner_command", status: "ok" });
-    ownerFocus = vi.fn().mockResolvedValue({ field: { origin: "https://login.example.com", kind: "password" } });
+    ownerFill = vi.fn().mockResolvedValue({ commandId: "owner_command", status: "ok", url: "https://login.example.com" });
+    ownerFocus = vi.fn().mockResolvedValue({ field: { origin: "https://login.example.com", kind: "password", focusId: body.focusId } });
     const deps = {
       config: { agents: [{ agentId }], appOrigin: "https://quokkabot.test", appHost: "quokkabot.test", viewHost: "view.test", viewOrigin: "https://view.test" },
       auth: { session },
@@ -71,7 +71,7 @@ describe("owner takeover native fields", () => {
   it("passes the owner lease generation, audits only kind and hostname, and never logs the native value", async () => {
     const metadata = await focus();
     expect(metadata.statusCode).toBe(200);
-    expect(metadata.json()).toEqual({ field: { origin: body.expectedOrigin, kind: body.kind } });
+    expect(metadata.json()).toEqual({ field: { origin: "https://login.example.com", kind: body.kind, focusId: body.focusId } });
     expect(ownerFocus).toHaveBeenCalledWith(17);
     const response = await fill();
     expect(response.statusCode).toBe(200);
@@ -81,6 +81,18 @@ describe("owner takeover native fields", () => {
     expect(ownerFill).toHaveBeenCalledWith({ ...body, commandId: expect.stringMatching(/^[a-z0-9-]{36}$/), leaseGeneration: 17 });
     expect(audit).toHaveBeenCalledWith(agentId, "owner", "owner.filled_field", { kind: "password", site: "login.example.com" });
     expect(logs.join("") + JSON.stringify(audit.mock.calls) + response.body + metadata.body).not.toContain(body.value);
+  });
+
+  it("passes the phone's old handle unchanged under a later lease and propagates its refusal", async () => {
+    const inspected = (await focus()).json().field;
+    lease = { holder: "owner", generation: 19, expiresAt: null };
+    ownerFill.mockResolvedValue({ commandId: "old_focus", status: "blocked", message: "wrong field kind" });
+    const response = await fill(cookieHeaders, { ...body, focusId: inspected.focusId });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe("wrong_field");
+    expect(ownerFill).toHaveBeenCalledWith(expect.objectContaining({ focusId: inspected.focusId, leaseGeneration: 19 }));
+    expect(ownerFocus).toHaveBeenCalledTimes(1);
+    expect(audit).not.toHaveBeenCalled();
   });
 
   it("accepts the phone bearer token without Origin and ignores cookies", async () => {
@@ -129,7 +141,7 @@ describe("owner takeover native fields", () => {
     expect(audit).not.toHaveBeenCalled();
   });
 
-  it.each([{}, { ...body, value: "" }, { ...body, value: "x".repeat(501) }, { ...body, kind: "username" }, { ...body, leaseGeneration: 18 }, { ...body, expectedOrigin: "https://example.com/path" }, { ...body, expectedOrigin: body.value }])("validates fill bodies before forwarding %j", async (payload) => {
+  it.each([{}, { ...body, focusId: undefined }, { ...body, focusId: "unknown" }, { ...body, value: "" }, { ...body, value: "x".repeat(501) }, { ...body, kind: "username" }, { ...body, leaseGeneration: 18 }, { ...body, expectedOrigin: "https://example.com/path" }, { ...body, expectedOrigin: body.value }])("validates fill bodies before forwarding %j", async (payload) => {
     const response = await fill(cookieHeaders, payload);
     expect(response.statusCode).toBe(400);
     expect(ownerFill).not.toHaveBeenCalled();

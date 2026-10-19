@@ -93,6 +93,7 @@ export const CHROME_ARGV = Object.freeze([
   "--start-maximized", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=9222",
   "--proxy-server=<QUOKKABOT_PROXY>", "--proxy-bypass-list=<-loopback>",
   "--disable-background-networking", "--disable-component-update",
+  "--disable-features=BackForwardCache",
   "--disable-sync", "--password-store=basic", "--test-type",
 ]);
 export function chromeArgv(proxy: string): string[] {

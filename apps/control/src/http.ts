@@ -749,7 +749,7 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
       if (result.status === "blocked" && result.message === "no takeover") throw new HttpError(409, "no_takeover", "Take over the computer first.");
       throw new HttpError(502, "owner_fill_failed", "Could not fill the field. Check the computer before trying again.");
     }
-    await audit.append(agentId, "owner", "owner.filled_field", { kind: body.kind, site: new URL(body.expectedOrigin).hostname });
+    await audit.append(agentId, "owner", "owner.filled_field", { kind: body.kind, site: new URL(result.url!).hostname });
     return { ok: true };
   });
   app.post<{ Params: { agentId: string } }>("/api/agents/:agentId/attended", appRoute, async (request) => {

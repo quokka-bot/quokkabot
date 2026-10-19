@@ -56,12 +56,33 @@ const FIELD_RULE_SOURCE = `function fieldMatches(field, kind, owner = false) {
   if (kind === "password") return field.type === "password";
   if (kind === "username") return field.type === "text" || field.type === "email" || field.type === "tel";
   if (field.type === "password") return false;
+  if (owner && (field.type !== "text" && field.type !== "number" && field.type !== "tel" ||
+      /(zip|postal|post[ _-]*code|phone)/.test(field.hints))) return false;
   if (field.autocomplete.toLowerCase().split(/\\s+/).includes("one-time-code")) return true;
   if (field.type !== "text" && field.type !== "number" && field.type !== "tel") return false;
-  if (field.inputMode.toLowerCase() === "numeric") return true;
+  if (!owner && field.inputMode.toLowerCase() === "numeric") return true;
   if (!owner && field.maxLength >= 4 && field.maxLength <= 10) return true;
   if (!owner && /(^|[^a-z])token([^a-z]|$)/.test(field.hints)) return true;
   return /(^|[^a-z])(code|otp|totp|2fa|mfa|verification|verify|authenticator|pin)([^a-z]|$)/.test(field.hints);
+}`;
+
+// Check composed ancestors too: an inert shadow host must not accept an owner value.
+const VISIBLE_FIELD_SOURCE = `function visibleField(element) {
+  if (!element.isConnected || element.ownerDocument !== document || document.visibilityState !== "visible") return false;
+  for (let ancestor = element; ancestor; ancestor = ancestor.parentElement || ancestor.getRootNode().host) {
+    const style = getComputedStyle(ancestor);
+    if (ancestor.hidden || ancestor.inert || style.display === "none" || style.visibility !== "visible" || style.opacity === "0") return false;
+  }
+  if (!element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true, contentVisibilityAuto: true })) return false;
+  const box = element.getBoundingClientRect();
+  return box.width > 0 && box.height > 0 && box.bottom > 0 && box.right > 0 && box.top < innerHeight && box.left < innerWidth;
+}`;
+export const OWNER_ELEMENT_EXPRESSION = `(() => { ${FOCUSED_FIELD_SOURCE}; const found = focusedField(); return found ? found.element : null; })()`;
+export const OWNER_FIELD_FUNCTION = `function () {
+  ${FOCUSED_FIELD_SOURCE}
+  ${VISIBLE_FIELD_SOURCE}
+  const found = focusedField();
+  return found && found.element === this && visibleField(this) ? found.field : null;
 }`;
 
 // This fixed expression runs only in a service-created isolated world.
@@ -70,9 +91,11 @@ export const FOCUSED_FIELD_EXPRESSION = `(() => { ${FOCUSED_FIELD_SOURCE}; const
 // Checks the site, the focused element and its kind, and inserts the value, in one task of the page: no page script
 // can move focus or change the field between the check and the insertion. Runs in the isolated world of the frame
 // that was inspected; if that frame navigated, its context is gone and the call fails without typing.
-export const INSERT_FUNCTION = `function (kind, expectedOrigin, value, owner = false, allowLocalhostHttp = false) {
+export const INSERT_FUNCTION = `function (kind, expectedOrigin, value, owner = false, allowLocalhostHttp = false, deadline = 0) {
   ${FOCUSED_FIELD_SOURCE}
   ${FIELD_RULE_SOURCE}
+  ${VISIBLE_FIELD_SOURCE}
+  if (owner && Date.now() >= deadline) return "expired insertion";
   if (location.origin !== expectedOrigin) return "wrong site";
   if (owner) {
     const origin = new URL(location.origin);
@@ -82,34 +105,54 @@ export const INSERT_FUNCTION = `function (kind, expectedOrigin, value, owner = f
   const found = focusedField();
   if (!found || !fieldMatches(found.field, kind, owner)) return "wrong field kind";
   const element = found.element;
+  if (owner && (element !== this || !visibleField(element))) return "wrong field kind";
   element.select();
+  if (owner && (Date.now() >= deadline || focusedField()?.element !== this || !visibleField(element))) return "expired insertion";
   if (!document.execCommand("insertText", false, value)) return "not inserted";
   return element.value === value ? "ok" : "not inserted";
 }`;
 
 const fieldMatchesInService = new Function(`${FIELD_RULE_SOURCE}; return fieldMatches;`)() as (field: Field, kind: SecretFillRequest["kind"], owner?: boolean) => boolean;
 
-interface FocusedTarget { origin: string; frameSend: SecretFillSend; contextId: number }
+export interface FocusedTarget { origin: string; frameSend: SecretFillSend; contextId: number; frameId: string; objectId?: string }
 
-export async function focusedFields(send: SecretFillSend, forFrame: FrameSend): Promise<(FocusedTarget & { field: Field })[]> {
+export async function focusedFields(send: SecretFillSend, forFrame: FrameSend, owner = false, captured: FocusedTarget[] = []): Promise<(FocusedTarget & { field: Field })[]> {
   const { frameTree } = z.object({ frameTree: FrameTreeSchema }).parse(await send("Page.getFrameTree"));
-  const focused: { origin: string; field: Field; frameSend: SecretFillSend; contextId: number }[] = [];
+  const focused: (FocusedTarget & { field: Field })[] = [];
   async function inspect(tree: FrameTree): Promise<void> {
     const frameSend = await forFrame(tree.frame.id);
     const world = z.object({ executionContextId: z.number().int().positive() }).parse(await frameSend("Page.createIsolatedWorld", {
       frameId: tree.frame.id, worldName: "quokkabot-secret-fill", grantUniveralAccess: false,
     }));
-    const evaluated = z.object({
-      result: z.object({ type: z.string(), value: Field.nullable() }), exceptionDetails: z.unknown().optional(),
-    }).parse(await frameSend("Runtime.evaluate", {
-      expression: FOCUSED_FIELD_EXPRESSION, contextId: world.executionContextId,
-      returnByValue: true, silent: true,
-    }));
-    if (evaluated.exceptionDetails !== undefined || evaluated.result.type !== "object") {
-      throw new SecretFillError("blocked", "wrong field kind");
+    const target: FocusedTarget = { origin: tree.frame.securityOrigin, frameSend, contextId: world.executionContextId, frameId: tree.frame.id };
+    let metadata: unknown;
+    if (owner) {
+      const evaluated = z.object({
+        result: z.object({ objectId: z.string().optional(), subtype: z.string().optional() }), exceptionDetails: z.unknown().optional(),
+      }).parse(await frameSend("Runtime.evaluate", {
+        expression: OWNER_ELEMENT_EXPRESSION, contextId: target.contextId, returnByValue: false, silent: true,
+      }));
+      if (evaluated.exceptionDetails !== undefined) throw new SecretFillError("blocked", "wrong field kind");
+      if (evaluated.result.objectId !== undefined) {
+        target.objectId = evaluated.result.objectId;
+        captured.push(target);
+        metadata = await frameSend("Runtime.callFunctionOn", {
+          objectId: target.objectId, functionDeclaration: OWNER_FIELD_FUNCTION, returnByValue: true, silent: true,
+        });
+        // An unsuitable or invisible focused field still makes the overall inspection fail closed.
+        if (z.object({ result: z.object({ value: z.unknown() }) }).parse(metadata).result.value === null) {
+          throw new SecretFillError("blocked", "wrong field kind");
+        }
+      } else if (evaluated.result.subtype !== "null") throw new SecretFillError("blocked", "wrong field kind");
+    } else {
+      metadata = await frameSend("Runtime.evaluate", {
+        expression: FOCUSED_FIELD_EXPRESSION, contextId: target.contextId, returnByValue: true, silent: true,
+      });
     }
-    if (evaluated.result.value !== null) {
-      focused.push({ origin: tree.frame.securityOrigin, field: evaluated.result.value, frameSend, contextId: world.executionContextId });
+    if (metadata !== undefined) {
+      const evaluated = z.object({ result: z.object({ value: Field.nullable() }), exceptionDetails: z.unknown().optional() }).parse(metadata);
+      if (evaluated.exceptionDetails !== undefined) throw new SecretFillError("blocked", "wrong field kind");
+      if (evaluated.result.value !== null) focused.push({ ...target, field: evaluated.result.value });
     }
     for (const child of tree.childFrames ?? []) await inspect(child);
   }
@@ -137,7 +180,7 @@ async function checkFocusedField(send: SecretFillSend, forFrame: FrameSend, requ
     throw new SecretFillError("blocked", `wrong site: the field is on ${origin.hostname}`);
   }
   if (!fieldMatchesInService(selected.field, request.kind)) throw new SecretFillError("blocked", "wrong field kind");
-  return { origin: origin.origin, frameSend: selected.frameSend, contextId: selected.contextId };
+  return { ...selected, origin: origin.origin };
 }
 
 export async function fillSecret(send: SecretFillSend, forFrame: FrameSend, request: SecretFillRequest, allowLocalhostHttp = false): Promise<void> {
@@ -158,24 +201,25 @@ export function ownerTarget<T extends FocusedTarget & { field: Field }>(focused:
   return { ...selected, origin: origin.origin, kind };
 }
 
-export async function fillOwner(target: FocusedTarget & { kind: OwnerFillRequest["kind"] }, send: SecretFillSend, request: OwnerFillRequest, allowLocalhostHttp: boolean): Promise<void> {
-  if (target.origin !== request.expectedOrigin) throw new SecretFillError("blocked", "wrong site");
+export async function fillOwner(target: FocusedTarget & { kind: OwnerFillRequest["kind"] }, send: SecretFillSend, request: OwnerFillRequest, allowLocalhostHttp: boolean, deadline: number): Promise<void> {
+  if (!target.objectId) throw new SecretFillError("blocked", "wrong field kind");
   if (target.kind !== request.kind) throw new SecretFillError("blocked", "wrong field kind");
-  await insert(target, send, request, true, allowLocalhostHttp);
+  await insert(target, send, request, true, allowLocalhostHttp, deadline);
 }
 
-async function insert(target: FocusedTarget, send: SecretFillSend, request: Pick<SecretFillRequest, "kind" | "value" | "submit">, owner: boolean, allowLocalhostHttp: boolean): Promise<void> {
+async function insert(target: FocusedTarget, send: SecretFillSend, request: Pick<SecretFillRequest, "kind" | "value" | "submit">, owner: boolean, allowLocalhostHttp: boolean, deadline = 0): Promise<void> {
   const inserted = z.object({ result: z.object({ value: z.string() }), exceptionDetails: z.unknown().optional() }).parse(
     await target.frameSend("Runtime.callFunctionOn", {
       functionDeclaration: INSERT_FUNCTION,
-      executionContextId: target.contextId,
-      arguments: [{ value: request.kind }, { value: target.origin }, { value: request.value }, ...(owner ? [{ value: true }, { value: allowLocalhostHttp }] : [])],
+      ...(owner ? { objectId: target.objectId } : { executionContextId: target.contextId }),
+      arguments: [{ value: request.kind }, { value: target.origin }, { value: request.value }, ...(owner ? [{ value: true }, { value: allowLocalhostHttp }, { value: deadline }] : [])],
       returnByValue: true,
       silent: true,
     }),
   );
   if (inserted.exceptionDetails !== undefined) throw new SecretFillError("failed", "the field did not accept the value");
   const outcome = inserted.result.value;
+  if (outcome === "expired insertion") throw new SecretFillError("blocked", "no takeover");
   if (outcome === "wrong site" || outcome === "wrong field kind") throw new SecretFillError("blocked", outcome);
   if (outcome !== "ok") throw new SecretFillError("failed", "the field did not accept the value");
   if (request.submit) {

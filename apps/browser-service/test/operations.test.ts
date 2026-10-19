@@ -25,7 +25,7 @@ describe("fixed Chrome and agent-browser invocations", () => {
       "--user-data-dir=/config/chrome-profile", "--no-first-run", "--no-default-browser-check", "--start-maximized",
       "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=9222", "--proxy-server=<QUOKKABOT_PROXY>",
       "--proxy-bypass-list=<-loopback>", "--disable-background-networking",
-      "--disable-component-update", "--disable-sync", "--password-store=basic", "--test-type",
+      "--disable-component-update", "--disable-features=BackForwardCache", "--disable-sync", "--password-store=basic", "--test-type",
     ]);
     expect(chromeArgv("http://egress:3128")).not.toContain("--no-sandbox");
     const h = await setup();

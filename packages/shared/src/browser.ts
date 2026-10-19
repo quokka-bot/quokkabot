@@ -200,22 +200,18 @@ export const SecretFillRequest = z
 export type SecretFillRequest = z.infer<typeof SecretFillRequest>;
 
 // The owner's native fields never pass through a model tool. Only the current owner lease may inspect or fill
-// the field the owner focused; the expected origin is checked again in the same page task as insertion.
+// the inspected element. The single-use handle binds the lease, document and origin checked at insertion.
 export const OwnerFieldKind = z.enum(["password", "code"]);
 export type OwnerFieldKind = z.infer<typeof OwnerFieldKind>;
-export const OwnerFocusResult = z.object({ field: z.object({ origin: z.string(), kind: OwnerFieldKind }).strict().nullable() }).strict();
+export const OwnerFocusId = z.string().regex(/^[a-f0-9]{64}$/);
+export const OwnerFocusResult = z.object({ field: z.object({ origin: z.string(), kind: OwnerFieldKind, focusId: OwnerFocusId }).strict().nullable() }).strict();
 export type OwnerFocusResult = z.infer<typeof OwnerFocusResult>;
 export const OwnerFillRequest = z.object({
   commandId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
   leaseGeneration: z.number().int().min(1),
   kind: OwnerFieldKind,
   value: z.string().min(1).max(500),
-  expectedOrigin: z.url().max(4096).refine((value) => {
-    try {
-      const url = new URL(value);
-      return (url.protocol === "https:" || url.protocol === "http:") && url.origin === value;
-    } catch { return false; }
-  }, "Expected a page origin"),
+  focusId: OwnerFocusId,
   submit: z.boolean(),
 }).strict();
 export type OwnerFillRequest = z.infer<typeof OwnerFillRequest>;

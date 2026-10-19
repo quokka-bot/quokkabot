@@ -303,7 +303,10 @@ export class BrowserServiceClient {
   }
   async ownerFill(request: OwnerFillRequest): Promise<BrowserCommandResult> {
     try {
-      return await jsonCall(this.base(), this.token, "POST", "/v1/owner-fill", request, BrowserCommandResult, 60_000);
+      const result = await jsonCall(this.base(), this.token, "POST", "/v1/owner-fill", request, BrowserCommandResult, 60_000);
+      // Only the browser's bound handle knows the insertion's origin. The phone cannot choose the audit site.
+      if (result.status === "ok" && (!result.url || new URL(result.url).origin !== result.url)) throw new Error("missing owner fill origin");
+      return result;
     } catch {
       // Neither transport errors nor an invalid reply may echo the native field's value.
       throw new Error("owner fill failed");
