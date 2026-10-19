@@ -14,6 +14,17 @@ it("keeps HTML, dangerous schemes, unsupported markup and incomplete delimiters 
   expect(markdownInline("")).toEqual([]);
   expect(markdownInline("* leading*")).toEqual([plain("* leading*")]);
 });
+it("parses long runs of brackets and unfinished links in linear time", () => {
+  const brackets = "[" + "[\\".repeat(100_000);
+  const links = "[\\](http://" + "[!](http://".repeat(20_000);
+  const started = performance.now();
+  expect(markdownInline(brackets)).toEqual([plain(brackets)]);
+  expect(markdownInline(links)).toEqual([plain(links)]);
+  expect(performance.now() - started).toBeLessThan(500);
+  expect(markdownInline("[a](https://x.test/[b]) [c](https://y.test)")).toEqual([
+    plain("[a](https://x.test/[b]) "), { kind: "link", text: "c", url: "https://y.test" },
+  ]);
+});
 it("preserves the web subset's nonrecursive inline parsing", () => {
   expect(markdownInline("**use `code`** and `**literal**`")).toEqual([
     { kind: "bold", text: "use `code`" }, plain(" and "), { kind: "code", text: "**literal**" },

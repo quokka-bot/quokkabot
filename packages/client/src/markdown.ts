@@ -9,7 +9,8 @@ export type MarkdownBlock =
 // Tokens only, with no HTML interpretation or URL navigation. Both clients display links as label (url).
 export function markdownInline(text: string): MarkdownInline[] {
   const out: MarkdownInline[] = [];
-  const pattern = /(\*\*([^*]+)\*\*|\*([^*\s][^*]*)\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\))/g;
+  // Link text stops at any bracket and a URL at any bracket or parenthesis, so a failed match never rescans the line.
+  const pattern = /(\*\*([^*]+)\*\*|\*([^*\s][^*]*)\*|`([^`]+)`|\[([^[\]]+)\]\((https?:\/\/[^()[\]\s]+)\))/g;
   let last = 0;
   for (const match of text.matchAll(pattern)) {
     const at = match.index;
