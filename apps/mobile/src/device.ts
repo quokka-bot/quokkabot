@@ -14,4 +14,5 @@ export function passkeyDomain(): string {
 }
 
 export const SUPPORT_URL = "https://quokkabot.com/support";
+export const SUPPORT_EMAIL = "support@quokkabot.com";
 export const PRIVACY_URL = "https://quokkabot.com/privacy";
