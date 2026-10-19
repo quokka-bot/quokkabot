@@ -1,5 +1,6 @@
 // Renders the PNG icons in public/ from the SVG sources in src/icons. Run after changing an icon: node scripts/icons.mjs
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 
 const root = new URL("..", import.meta.url);
@@ -15,6 +16,6 @@ const outputs = [
 for (const { svg, size, file, crop } of outputs) {
   let image = sharp(svg, { density: 300 });
   if (crop) image = image.extract({ left: 417, top: 417, width: 3433, height: 3433 });
-  await image.resize(size, size).png({ compressionLevel: 9 }).toFile(new URL(file, root).pathname);
+  await image.resize(size, size).png({ compressionLevel: 9 }).toFile(fileURLToPath(new URL(file, root)));
   console.log(file);
 }
