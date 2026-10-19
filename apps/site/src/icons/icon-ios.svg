@@ -1,19 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="tile" x1="249" y1="0" x2="746" y2="1024" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#8351e4"/>
-      <stop offset="0.6" stop-color="#7442d1"/>
-      <stop offset="1" stop-color="#6534c4"/>
-    </linearGradient>
-  </defs>
-  <rect width="1024" height="1024" fill="url(#tile)"/>
-  <g transform="translate(512 512) scale(1.2427184466) translate(-512 -512)">
-    <path d="M330 408c-48-17-72-60-62-113 9-49 45-73 79-50 33 22 43 67 36 101 81-35 177-35 258 0-7-34 3-79 36-101 34-23 70 1 79 50 10 53-14 96-62 113 58 48 95 111 95 182 0 126-113 210-277 210S235 716 235 590c0-71 37-134 95-182z" fill="#fcfcfc"/>
-    <path d="M329 351c-24-10-35-30-29-55 4-18 14-24 25-12 15 16 20 42 16 60-1 6-6 9-12 7zM695 351c24-10 35-30 29-55-4-18-14-24-25-12-15 16-20 42-16 60 1 6 6 9 12 7z" fill="#bca0ee"/>
-    <ellipse cx="512" cy="636" rx="164" ry="120" fill="#ede5fa"/>
-    <circle cx="401" cy="492" r="31" fill="#39205c"/><circle cx="410" cy="482" r="9" fill="#fcfcfc"/>
-    <circle cx="623" cy="492" r="31" fill="#39205c"/><circle cx="632" cy="482" r="9" fill="#fcfcfc"/>
-    <path d="M473 551c16-12 62-12 78 0 9 7 9 18 1 26l-23 20c-10 9-24 9-34 0l-23-20c-8-8-8-19 1-26z" fill="#39205c"/>
-    <path d="M402 626c63 53 157 53 220 0-14 49-55 77-110 77s-96-28-110-77z" fill="#39205c"/>
-  </g>
+  <!-- The KcalSnap mark: a visor with two eyes under a tilted brow. Full-bleed; iOS and Android round the corners. -->
+  <rect width="1024" height="1024" fill="#ffffff"/>
+  <rect x="279.375" y="290.5" width="470" height="66" rx="33" transform="rotate(-7 514.375 323.5)" fill="#0f1417"/>
+  <rect x="232" y="402" width="560" height="300" rx="118" fill="#0f1417"/>
+  <ellipse cx="452" cy="552" rx="42" ry="75" fill="#ffffff"/>
+  <ellipse cx="662" cy="552" rx="42" ry="75" fill="#ffffff"/>
 </svg>

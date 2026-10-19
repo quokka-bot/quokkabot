@@ -1,7 +1,7 @@
 // Server-rendered pages outside the app: the end of a Google connection, and the public About and Privacy pages that
-// Google's consent screen links to. Same look as the app: light, centred card, the agent blob.
+// Google's consent screen links to. Same look as the app: light, centred card, the Quokka Bot mark.
 
-const BLOB = `<svg width="56" height="56" viewBox="0 0 64 64" aria-hidden="true"><path fill="#8b5cf6" d="M10 30c0-13 10-22 24-22 13 0 22 8 22 19 0 14-11 27-27 27C17 54 10 44 10 30z" transform="rotate(-12 32 32)"/><ellipse cx="27" cy="27" rx="3.2" ry="5" fill="#fff" transform="rotate(-12 27 27)"/><ellipse cx="38" cy="25" rx="3.2" ry="5" fill="#fff" transform="rotate(-12 38 25)"/></svg>`;
+const LOGO = `<svg width="56" height="56" viewBox="222 192 580 580" aria-hidden="true"><rect x="279.375" y="290.5" width="470" height="66" rx="33" transform="rotate(-7 514.375 323.5)" fill="#0f1417"/><rect x="232" y="402" width="560" height="300" rx="118" fill="#0f1417"/><ellipse cx="452" cy="552" rx="42" ry="75" fill="#fff"/><ellipse cx="662" cy="552" rx="42" ry="75" fill="#fff"/></svg>`;
 
 const STYLE = `
 :root { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, sans-serif; color: #1c1c1c; background: #f5f5f5; -webkit-font-smoothing: antialiased; }
@@ -35,13 +35,13 @@ function shell(title: string, body: string, centered: boolean): string {
 // The browser lands here after Google's consent page.
 export function connectedPage(ok: boolean, account: string | null, message: string, appOrigin: string): string {
   const body = ok
-    ? `${BLOB}<div class="status ok">✓</div><h1>Gmail connected</h1><div class="account">${escapeHtml(account ?? "")}</div><p>Your agent can now read, search and draft email in this account. Drafts stay in Drafts until you send them.</p><p class="muted">You can close this tab. Quokka Bot carries on by itself.</p><a class="button" href="${escapeHtml(appOrigin)}/">Open Quokka Bot</a>`
-    : `${BLOB}<div class="status bad">!</div><h1>Gmail not connected</h1><p>${escapeHtml(message)}</p><a class="button" href="${escapeHtml(appOrigin)}/">Back to Quokka Bot</a>`;
+    ? `${LOGO}<div class="status ok">✓</div><h1>Gmail connected</h1><div class="account">${escapeHtml(account ?? "")}</div><p>Your agent can now read, search and draft email in this account. Drafts stay in Drafts until you send them.</p><p class="muted">You can close this tab. Quokka Bot carries on by itself.</p><a class="button" href="${escapeHtml(appOrigin)}/">Open Quokka Bot</a>`
+    : `${LOGO}<div class="status bad">!</div><h1>Gmail not connected</h1><p>${escapeHtml(message)}</p><a class="button" href="${escapeHtml(appOrigin)}/">Back to Quokka Bot</a>`;
   return shell(ok ? "Gmail connected" : "Gmail not connected", body, true);
 }
 
 export function aboutPage(appOrigin: string, contact: string | null): string {
-  return shell("About", `${BLOB}<h1>Quokka Bot</h1>
+  return shell("About", `${LOGO}<h1>Quokka Bot</h1>
 <p>Quokka Bot gives your AI agent its own computer on your own server: a browser, a workspace and a mailbox connection. You give it tasks in a chat; it works on its computer and asks you when it needs something.</p>
 <p>This server belongs to its owner. Only the owner can sign in, with a passkey.</p>
 <a class="button" href="${escapeHtml(appOrigin)}/">Sign in</a>
