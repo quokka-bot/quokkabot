@@ -24,12 +24,17 @@ export async function forgetIfReinstalled(): Promise<void> {
   marker.create();
 }
 
+// A damaged entry is deleted and the phone starts signed out: the owner signs in again from the welcome screen.
 export async function loadConnection(): Promise<Connection | null> {
   const stored = await SecureStore.getItemAsync(KEY, OPTIONS);
   if (stored === null) return null;
-  const parsed = Connection.safeParse(JSON.parse(stored));
-  if (!parsed.success) throw new Error(`The saved sign-in is damaged: ${parsed.error.issues[0]?.message ?? "unreadable"}`);
-  return parsed.data;
+  let value: unknown;
+  try { value = JSON.parse(stored); } catch { value = null; }
+  const parsed = Connection.safeParse(value);
+  if (parsed.success) return parsed.data;
+  console.warn("The saved sign-in is damaged; signing out.");
+  await SecureStore.deleteItemAsync(KEY, OPTIONS);
+  return null;
 }
 
 export async function saveConnection(connection: Connection): Promise<void> {

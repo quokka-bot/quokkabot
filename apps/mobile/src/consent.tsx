@@ -16,11 +16,13 @@ const file = new File(Paths.document, "ai-consent.json");
 let granted: Record<string, string> = read();
 const listeners = new Set<() => void>();
 
+// A damaged file (an interrupted write) means no recorded consent: the phone asks again before sending anything.
 function read(): Record<string, string> {
   if (!file.exists) return {};
-  const parsed: unknown = JSON.parse(file.textSync());
-  if (typeof parsed !== "object" || parsed === null) throw new Error("ai-consent.json is damaged");
-  return parsed as Record<string, string>;
+  let parsed: unknown;
+  try { parsed = JSON.parse(file.textSync()); } catch { parsed = null; }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+  return Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === "string"));
 }
 function write(next: Record<string, string>): void {
   if (!file.exists) file.create();

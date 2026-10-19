@@ -32,7 +32,9 @@ APP_VARIANT=development npx expo start --dev-client
 ```
 
 Store builds run on EAS (`eas.json`): set `QB_EAS_PROJECT_ID` and `QB_EXPO_OWNER` to your EAS project, and
-`QB_PASSKEY_DOMAIN` to your server, then `eas build --profile production`. The GitHub workflow
+`QB_PASSKEY_DOMAIN` to your server, then `eas build --profile production`. A copy published under another Apple
+team also needs its own bundle identifiers (`VARIANTS` in `app.config.ts`) and its own App Store Connect app
+(`ascAppId` in `eas.json`): both name Quokka Bot's own app. The GitHub workflow
 `.github/workflows/mobile-eas.yml` does the same when the repository has an `EXPO_TOKEN` secret, and does nothing
 without one.
 

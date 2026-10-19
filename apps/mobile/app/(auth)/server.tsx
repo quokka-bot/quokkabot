@@ -4,6 +4,7 @@ import { KeyboardAvoidingView, ScrollView, StyleSheet, Text, TextInput, View } f
 import { deviceName } from "../../src/device";
 import { appFetch } from "../../src/session";
 import { discover, serverOrigin, startLink } from "../../src/sign-in";
+import { chooseServer } from "../../src/sign-in-flow";
 import { Button, ErrorLine } from "../../src/ui/kit";
 import { colors } from "../../src/ui/theme";
 
@@ -19,9 +20,11 @@ export default function Server() {
     setBusy(path); setError(null);
     try {
       const server = await discover(appFetch, serverOrigin(address));
-      if (path === "code") { router.push({ pathname: "/code", params: server }); return; }
+      // The next screen reads the server and the link from the app, never from its route.
+      if (path === "code") { chooseServer(server); router.push("/code"); return; }
       const link = await startLink(appFetch, server.origin, deviceName());
-      router.push({ pathname: "/link", params: { ...server, userCode: link.userCode, pollToken: link.pollToken, verifyUrl: link.verifyUrl } });
+      chooseServer(server, link);
+      router.push("/link");
     } catch (failure) {
       setError(failure);
     } finally { setBusy(null); }

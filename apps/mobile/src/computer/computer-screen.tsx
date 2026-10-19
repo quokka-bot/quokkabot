@@ -41,10 +41,11 @@ export function ComputerScreen({ agentId }: { agentId: string }) {
   const killed = data?.computer.state === "killed";
   // A takeover the agent asked for ends with "I'm done", which tells the agent; one the owner started hands back.
   const asked = inbox.data?.items.find((item) => item.kind === "owner_request" && item.agentId === agentId && item.request.kind === "takeover" && item.request.answeredAt === null);
-  const handBack = () => run(async () => {
-    if (asked?.kind === "owner_request") await new Promise<void>((resolve, reject) => withConsent(connection.origin, agentId, () => { api.takeoverDone(asked.request.taskId).then(() => resolve(), reject); }));
-    else await api.takeover(agentId, "return");
-  });
+  // Without consent, "I'm done" opens the permission screen and sends nothing: the owner taps it again after allowing.
+  const handBack = () => {
+    if (asked?.kind === "owner_request") withConsent(connection.origin, agentId, () => void run(() => api.takeoverDone(asked.request.taskId)));
+    else void run(() => api.takeover(agentId, "return"));
+  };
   const stopEverything = () => Alert.alert("Stop everything?", "Closes this agent's network and stops its computer. Starting it again needs your passkey in the web app.", [
     { text: "Cancel", style: "cancel" },
     { text: "Stop everything", style: "destructive", onPress: () => void run(() => api.kill(agentId)) },
@@ -69,7 +70,7 @@ export function ComputerScreen({ agentId }: { agentId: string }) {
       {holder === "owner" && <NativeFields agentId={agentId} />}
       <View style={styles.controls}>
         {holder === "owner"
-          ? <Pressable accessibilityRole="button" style={styles.pill} disabled={busy} onPress={() => void handBack()}><Text style={styles.pillText}>{asked ? "I'm done, continue" : "Hand back"}</Text></Pressable>
+          ? <Pressable accessibilityRole="button" style={styles.pill} disabled={busy} onPress={handBack}><Text style={styles.pillText}>{asked ? "I'm done, continue" : "Hand back"}</Text></Pressable>
           : <Pressable accessibilityRole="button" style={styles.pill} disabled={busy || killed} onPress={() => void run(() => api.takeover(agentId, "take"))}><Text style={styles.pillText}>Take over</Text></Pressable>}
         <Pressable accessibilityRole="button" style={[styles.pill, styles.quiet]} onPress={() => setRevision((value) => value + 1)}><Text style={styles.quietText}>Refresh view</Text></Pressable>
       </View>
@@ -110,8 +111,15 @@ function NativeFields({ agentId }: { agentId: string }) {
     } catch (failure) { setMessage(failure instanceof Error ? failure.message : String(failure)); }
     finally { setValue(""); setBusy(false); }
   };
-  // The value lives only in this field: cleared after every fill, and when the field closes.
-  useEffect(() => () => setValue(""), []);
+  // The value lives only in this field: cleared after every fill, when the field closes and when the app goes to the
+  // background. Not on "inactive": iOS passes through it while Face ID approves a saved password for this field.
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "background") return;
+      setField(null); setValue(""); input.current?.blur();
+    });
+    return () => { subscription.remove(); setValue(""); };
+  }, []);
   if (!field) return <View style={styles.fields}>
     <Pressable accessibilityRole="button" disabled={busy} onPress={() => void check()} style={[styles.pill, styles.quiet]}><Text style={styles.quietText}>Type a password or code</Text></Pressable>
     {message && <Text style={styles.hint}>{message}</Text>}

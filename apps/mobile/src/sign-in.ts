@@ -74,13 +74,23 @@ export async function pollLink(fetchImpl: Fetch, origin: string, pollToken: stri
 }
 
 // Polls every two seconds until the owner approves or refuses, or the link expires. Stops when `stopped` says so.
+// The owner approves in a browser or on another device, and the phone's connection can drop meanwhile: a failed
+// request, a 429 or a 5xx is asked again, so the approval is still collected. A 4xx or an answer that is not a link's
+// state ends the wait.
 export async function waitForLink(fetchImpl: Fetch, origin: string, pollToken: string, stopped: () => boolean,
   sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms))): Promise<{ token: string } | { state: "refused" | "expired" | "stopped" }> {
   for (;;) {
     if (stopped()) return { state: "stopped" };
-    const result = await pollLink(fetchImpl, origin, pollToken);
-    if ("token" in result) return result;
-    if (result.state !== "pending") return { state: result.state };
+    let result: Awaited<ReturnType<typeof pollLink>> | null = null;
+    try { result = await pollLink(fetchImpl, origin, pollToken); }
+    catch (error) { if (!temporary(error)) throw error; }
+    if (result && "token" in result) return result;
+    if (result && result.state !== "pending") return { state: result.state };
     await sleep(2000);
   }
+}
+
+function temporary(error: unknown): boolean {
+  if (error instanceof ApiFailure) return error.status === 429 || error.status >= 500;
+  return !(error instanceof z.ZodError);
 }

@@ -113,7 +113,8 @@ jobs:
           MESSAGE: ${{ inputs.message }}
         run: eas update --channel production --environment production --platform ios --message "${MESSAGE:-Update $GITHUB_SHA}" --non-interactive
 
-      # A build in the queue counts as existing, so merges during a build never start a second one.
+      # A queued, running or finished build of this version counts as existing, so merges during a build never start a
+      # second one. An errored or canceled build does not count: the next push builds the version again.
       - name: Store build for a new version
         if: steps.token.outputs.present == 'true' && github.event_name == 'push'
         working-directory: apps/mobile
@@ -121,8 +122,9 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           version="$(npx expo config --json --type public | jq -r '.version')"
-          latest="$(eas build:list --platform ios --build-profile production --limit 1 --json --non-interactive | jq -r '.[0].appVersion // "none"')"
-          if [ "$latest" = "$version" ]; then
+          existing="$(eas build:list --platform ios --build-profile production --app-version "$version" --limit 50 --json --non-interactive \
+            | jq '[.[] | select(.status != "ERRORED" and .status != "CANCELED" and .status != "PENDING_CANCEL")] | length')"
+          if [ "$existing" -gt 0 ]; then
             echo "A production build for $version exists." >> "$GITHUB_STEP_SUMMARY"
           else
             eas build --platform ios --profile production --auto-submit --non-interactive --no-wait

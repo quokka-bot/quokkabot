@@ -65,4 +65,16 @@ describe("sign-in requests", () => {
     const stopping = waitForLink(async () => { stop = true; return json(202, { state: "pending" }); }, "https://bot.example.com", "p".repeat(43), () => stop, sleep);
     await expect(stopping).resolves.toEqual({ state: "stopped" });
   });
+
+  it("keeps polling through a dropped connection and server errors, and stops on a refused request or a bad answer", async () => {
+    const answers: (() => Promise<ReturnType<typeof json>>)[] = [
+      async () => { throw new Error("fetch failed: The Internet connection appears to be offline."); },
+      async () => json(503, {}), async () => json(429, {}), async () => json(200, { state: "approved", token: "t".repeat(43) }),
+    ];
+    const sleep = vi.fn(async () => undefined);
+    await expect(waitForLink(() => answers.shift()!(), "https://bot.example.com", "p".repeat(43), () => false, sleep)).resolves.toEqual({ token: "t".repeat(43) });
+    expect(sleep).toHaveBeenCalledTimes(3);
+    await expect(waitForLink(async () => json(400, {}), "https://bot.example.com", "p".repeat(43), () => false, sleep)).rejects.toThrow("HTTP 400");
+    await expect(waitForLink(async () => json(200, { state: "approved" }), "https://bot.example.com", "p".repeat(43), () => false, sleep)).rejects.toThrow();
+  });
 });

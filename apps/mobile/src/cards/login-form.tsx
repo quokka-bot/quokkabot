@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { SaveLoginRequest, UpdateLoginRequest, siteLabel, type LoginView } from "@quokkabot/shared";
-import { loginSites, validateTotp } from "@quokkabot/client";
+import { loginSites, requireLoginFields, validateTotp } from "@quokkabot/client";
 import { useAction } from "../chat/use-action";
 import { useSignedIn } from "../session";
 import { Button, ErrorLine } from "../ui/kit";
@@ -22,6 +22,8 @@ export function LoginForm({ agentId, login, initialSite = "", initialName = "", 
   const [details, setDetails] = useState(!compact);
   const [withTotp, setWithTotp] = useState(!compact);
   const save = useAction(agentId, async () => {
+    // An existing login keeps its password when the field stays empty.
+    requireLoginFields({ name, username, ...(login ? {} : { password }) });
     const common = { name: name.trim(), sites: loginSites(sites), username };
     const twoFactor = !removeTotp && totp.trim() ? validateTotp(totp) : undefined;
     if (login) {

@@ -7,6 +7,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { copyleftFree } from "./licence-expression.mjs";
 
 const COPYLEFT = /\b(A?GPL|LGPL|SSPL)/i;
 // Metro writes source paths relative to its server root, the workspace.
@@ -16,9 +17,9 @@ const mapsDir = join(exportDir, "_expo/static/js/ios");
 const maps = existsSync(mapsDir) ? readdirSync(mapsDir).filter((file) => file.endsWith(".map")) : [];
 if (maps.length === 0) throw new Error(`No source map in ${mapsDir}: run expo export with --dump-sourcemap first`);
 
-// A licence expression passes when some alternative has no copyleft term in it.
+// A licence expression passes when some way of meeting it uses no copyleft licence.
 function allowed(expression) {
-  return expression.replace(/[()]/g, "").split(/\s+OR\s+/i).some((choice) => !COPYLEFT.test(choice));
+  return copyleftFree(expression, (licence) => COPYLEFT.test(licence));
 }
 
 const packages = new Map();
@@ -49,10 +50,13 @@ for (const [name, root] of packages) {
 }
 
 // The native side: CocoaPods resolved by prebuild. Each pod's licence is read from its podspec in the Pods folder.
-const lock = resolve("apps/mobile/ios/Podfile.lock");
+// Paths start at the workspace: `pnpm build` runs this from apps/mobile. After a prebuild the lockfile must be there.
+const ios = join(workspace, "apps/mobile/ios");
+const lock = join(ios, "Podfile.lock");
 let pods = 0;
+if (existsSync(ios) && !existsSync(lock)) problems.push(`no Podfile.lock in ${ios}: run pod install, or remove the folder`);
 if (existsSync(lock)) {
-  const specs = resolve("apps/mobile/ios/Pods/Local Podspecs");
+  const specs = join(ios, "Pods/Local Podspecs");
   for (const line of readFileSync(lock, "utf8").split("\n")) {
     const match = /^ {2}- ([A-Za-z0-9_+.-]+)(?:\/[^ ]+)? \(/.exec(line);
     if (!match) continue;

@@ -104,7 +104,7 @@ describe("TaskEventSequencer", () => {
 
   it("rejects malformed JSON and schemas without acknowledging their sequence", () => {
     const sequencer = new TaskEventSequencer(taskId);
-    expect(() => sequencer.accept("1", "{")).toThrow(SyntaxError);
+    expect(() => sequencer.accept("1", "{")).toThrow("Task event: invalid JSON");
     const invalid = { ...JSON.parse(data(1)), event: { kind: "assistant_delta", text: 12 } };
     expect(() => sequencer.accept("1", JSON.stringify(invalid))).toThrow("Task event: invalid response at event.text");
     expect(() => sequencer.accept("1", "null")).toThrow("Task event: invalid response at root");
