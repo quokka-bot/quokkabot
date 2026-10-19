@@ -5,16 +5,26 @@ const fields = ["Harness", "Model", "Effort"];
 const summaryStart = "<!-- This is an auto-generated comment: release notes by coderabbit.ai -->";
 const summaryEnd = "<!-- end of auto-generated comment: release notes by coderabbit.ai -->";
 let body = process.env.PR_BODY ?? "";
-// CodeRabbit appends its summary to the description between these two markers; the author's text is the rest.
+// CodeRabbit appends its summary to the description between these two markers; the author's text is the rest. Without
+// the end marker nothing is cut.
 const start = body.indexOf(summaryStart);
-if (start !== -1) {
-  const end = body.indexOf(summaryEnd, start);
-  body = body.slice(0, start) + (end === -1 ? "" : body.slice(end + summaryEnd.length));
+const end = start === -1 ? -1 : body.indexOf(summaryEnd, start);
+if (end !== -1) body = body.slice(0, start) + body.slice(end + summaryEnd.length);
+// The text as it shows on the page: no blank lines, and no line inside an HTML comment, one line or several. A line
+// that opens a comment is dropped whole.
+const shown = [];
+let inComment = false;
+for (const raw of body.split(/\r?\n/)) {
+  const line = raw.trim();
+  if (inComment) {
+    if (line.includes("-->")) inComment = false;
+  } else if (line.startsWith("<!--")) {
+    inComment = !line.includes("-->", 4);
+  } else if (line !== "") {
+    shown.push(line);
+  }
 }
-const last = body.split(/\r?\n/).map((line) => line.trim())
-  // Blank lines and one-line HTML comments are not part of the text.
-  .filter((line) => line !== "" && !(line.startsWith("<!--") && line.endsWith("-->")))
-  .slice(-fields.length);
+const last = shown.slice(-fields.length);
 const missing = fields.filter((field, index) => !new RegExp(`^${field}:\\s*\\S`, "i").test(last[index] ?? ""));
 if (missing.length > 0) {
   console.error(`The PR description must end with these lines, filled in and in this order: ${fields.map((field) => `${field}:`).join(", ")}`);
