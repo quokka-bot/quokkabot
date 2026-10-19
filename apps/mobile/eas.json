@@ -20,7 +20,6 @@
       "environment": "development",
       "developmentClient": true,
       "distribution": "internal",
-      "channel": "development",
       "ios": {
         "simulator": true
       }
@@ -31,8 +30,7 @@
         "APP_VARIANT": "preview"
       },
       "environment": "preview",
-      "distribution": "internal",
-      "channel": "preview"
+      "distribution": "internal"
     },
     "production": {
       "extends": "base",
@@ -41,7 +39,6 @@
       },
       "environment": "production",
       "distribution": "store",
-      "channel": "production",
       "autoIncrement": true
     }
   },

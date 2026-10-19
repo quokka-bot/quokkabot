@@ -18,8 +18,8 @@ const variant = VARIANTS[variantName as Variant];
 // The hosted server whose domain is built into the app, so native passkeys work there. A copy of the app built for
 // another domain sets QB_PASSKEY_DOMAIN (and that server lists the build in QUOKKABOT_APPLE_APP_IDS).
 const passkeyDomain = process.env.QB_PASSKEY_DOMAIN ?? "app.quokkabot.com";
-// The EAS project the builds and over-the-air updates belong to, from the environment so a copy of the app builds
-// under its own account. Without it the app builds without updates (local builds, CI's bundle check).
+// The EAS project the builds belong to, from the environment so a copy of the app builds under its own account.
+// Local builds and CI's bundle check run without one.
 const projectId = process.env.QB_EAS_PROJECT_ID;
 const owner = process.env.QB_EXPO_OWNER;
 
@@ -42,7 +42,9 @@ const config: ExpoConfig = {
       NSCameraUsageDescription: "Scan the QR code your Quokka Bot server shows, to connect to it.",
     },
     // The app sends what the owner does only to the server they sign in to, which they run (or which runs for them);
-    // the developer receives none of it, and the app has no analytics or tracking (quokkabot.com/privacy).
+    // the developer receives none of it, and the app has no analytics or tracking (quokkabot.com/privacy). It has no
+    // over-the-air updates either (expo-updates would send Expo an install id on every launch): every change ships in
+    // a reviewed build.
     privacyManifests: {
       NSPrivacyTracking: false,
       NSPrivacyTrackingDomains: [],
@@ -58,10 +60,6 @@ const config: ExpoConfig = {
     ["expo-camera", { cameraPermission: "Scan the QR code your Quokka Bot server shows, to connect to it.", microphonePermission: false, recordAudioAndroid: false }],
     ["expo-splash-screen", { image: "./assets/splash.png", imageWidth: 160, backgroundColor: "#7442D1" }],
   ],
-  // Over-the-air updates reach only builds with the same native code and the same app version: a fix ships over
-  // the air, a new feature ships in a reviewed build with a new version (fingerprint.config.js adds the version).
-  runtimeVersion: { policy: "fingerprint" },
-  ...(projectId ? { updates: { url: `https://u.expo.dev/${projectId}`, checkAutomatically: "ON_LOAD" as const } } : { updates: { enabled: false } }),
   ...(owner ? { owner } : {}),
   extra: {
     passkeyDomain,

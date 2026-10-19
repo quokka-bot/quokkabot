@@ -38,8 +38,9 @@ team also needs its own bundle identifiers (`VARIANTS` in `app.config.ts`) and i
 `.github/workflows/mobile-eas.yml` does the same when the repository has an `EXPO_TOKEN` secret, and does nothing
 without one.
 
-Over-the-air updates reach only builds with the same native code and the same app version, so a fix ships over the
-air and a new feature ships in a new, reviewed version.
+The app has no over-the-air updates: every change, fixes included, ships in a new build that goes through App
+Review. expo-updates would send Expo an install id and app details on every launch, and the app connects only to the
+server the owner signs in to (quokkabot.com/privacy, and "Data Not Collected" in the App Store).
 
 ## Checks
 

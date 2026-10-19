@@ -1,15 +1,12 @@
 name: iPhone app (EAS)
 
-# Store builds and over-the-air updates for the iPhone app, on EAS. Without the EXPO_TOKEN secret (forks, a repository
-# that has not set it up) every run passes with a note and does nothing.
+# Store builds for the iPhone app, on EAS. Without the EXPO_TOKEN secret (forks, a repository that has not set it up)
+# every run passes with a note and does nothing.
 #
-# A push to main that touches the app:
-#   1. Store build: when no production build exists yet for the version in app.config.ts, build it and submit it to
-#      TestFlight. Bumping `version` starts the next release. Releasing to the App Store stays a manual step.
-#   2. Update: publish an over-the-air update to the production channel when a finished build has the same runtime
-#      version (the native fingerprint plus the app version, fingerprint.config.js). Updates carry fixes to the
-#      reviewed release only; a new feature ships in a new version.
-# Manual runs build a profile (production, preview) or publish an update.
+# A push to main that touches the app starts a store build when no production build exists yet for the version in
+# app.config.ts, and submits it to TestFlight. Bumping `version` starts the next release. Releasing to the App Store
+# stays a manual step. The app has no over-the-air updates: every change ships in a reviewed build.
+# Manual runs build a profile (production, preview).
 #
 # Repository variables: QB_EAS_PROJECT_ID and QB_EXPO_OWNER (the EAS project); the App Store Connect API key for
 # submissions is stored in EAS, not here.
@@ -24,24 +21,14 @@ on:
       - .github/workflows/mobile-eas.yml
   workflow_dispatch:
     inputs:
-      mode:
-        description: "build (a store or internal build) or update (over the air)"
-        required: true
-        type: choice
-        default: build
-        options: [build, update]
       profile:
-        description: "Build profile (mode build)"
+        description: "Build profile"
         required: true
         type: choice
         default: production
         options: [production, preview]
-      message:
-        description: "Update message (mode update)"
-        required: false
-        type: string
 
-# One run at a time, in merge order, so updates publish in order.
+# One run at a time, in merge order, so two merges never start two builds of one version.
 concurrency:
   group: mobile-eas
   cancel-in-progress: false
@@ -51,7 +38,7 @@ permissions:
 
 jobs:
   eas:
-    name: EAS ${{ github.event_name == 'push' && 'release' || inputs.mode }}
+    name: EAS ${{ github.event_name == 'push' && 'release' || inputs.profile }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -69,13 +56,11 @@ jobs:
             [ -n "$QB_EAS_PROJECT_ID" ] && [ -n "$QB_EXPO_OWNER" ] || { echo "::error::EXPO_TOKEN is set, but the QB_EAS_PROJECT_ID and QB_EXPO_OWNER variables are missing."; exit 1; }
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "EXPO_TOKEN is not set; nothing to build or publish." >> "$GITHUB_STEP_SUMMARY"
+            echo "EXPO_TOKEN is not set; nothing to build." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - if: steps.token.outputs.present == 'true'
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
       - if: steps.token.outputs.present == 'true'
         uses: pnpm/action-setup@v6
       - if: steps.token.outputs.present == 'true'
@@ -93,7 +78,7 @@ jobs:
           packager: npm
 
       - name: Build (manual)
-        if: steps.token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build'
+        if: steps.token.outputs.present == 'true' && github.event_name == 'workflow_dispatch'
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -104,14 +89,6 @@ jobs:
           else
             APP_VARIANT=preview eas build --platform ios --profile preview --non-interactive --no-wait
           fi
-
-      - name: Update (manual)
-        if: steps.token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'update'
-        working-directory: apps/mobile
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          MESSAGE: ${{ inputs.message }}
-        run: eas update --channel production --environment production --platform ios --message "${MESSAGE:-Update $GITHUB_SHA}" --non-interactive
 
       # A queued, running or finished build of this version counts as existing, so merges during a build never start a
       # second one. An errored or canceled build does not count: the next push builds the version again.
@@ -129,19 +106,4 @@ jobs:
           else
             eas build --platform ios --profile production --auto-submit --non-interactive --no-wait
             echo "Started the production build and TestFlight submission for $version." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Update for builds with this runtime
-        if: steps.token.outputs.present == 'true' && github.event_name == 'push'
-        working-directory: apps/mobile
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          hash="$(eas fingerprint:generate --platform ios --environment production --json --non-interactive | sed -n '/^{/,$p' | jq -er '.hash')"
-          matching="$(eas build:list --platform ios --build-profile production --status finished --fingerprint-hash "$hash" --limit 1 --json --non-interactive | jq 'length')"
-          if [ "$matching" -gt 0 ]; then
-            eas update --channel production --environment production --platform ios --message "$(git log -1 --pretty=%s | head -c 120)" --non-interactive
-            echo "Published an update for runtime $hash." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No finished build has runtime $hash; the change ships with the next build." >> "$GITHUB_STEP_SUMMARY"
           fi
