@@ -1,7 +1,10 @@
 import { TaskEventEnvelope, type ReactionEmoji } from "@quokkabot/shared";
 
 export function parseTaskEvent(data: string): TaskEventEnvelope {
-  const parsed = TaskEventEnvelope.safeParse(JSON.parse(data) as unknown);
+  let value: unknown;
+  // Malformed JSON is the server's fault like a schema mismatch: it stops the stream instead of reconnecting forever.
+  try { value = JSON.parse(data); } catch { throw new Error("Task event: invalid JSON"); }
+  const parsed = TaskEventEnvelope.safeParse(value);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     throw new Error(`Task event: invalid response at ${issue?.path.join(".") || "root"}: ${issue?.message ?? "schema mismatch"}`);

@@ -1,4 +1,4 @@
-import type { Attachment, DomainDecision, DomainRequestView, OwnerRequest, TaskEventEnvelope } from "@quokkabot/shared";
+import type { Attachment, DomainDecision, DomainRequestView, OwnerRequest, Task, TaskEventEnvelope } from "@quokkabot/shared";
 import { streamRows } from "./task-stream.js";
 
 export type ChatItem =
@@ -118,6 +118,14 @@ export function describeStep(line: string | undefined): string {
     case "request_domains": case "request_login": case "request_takeover": case "ask_owner": return "Asking you";
     default: return "Making progress";
   }
+}
+
+// The task as of the newest record: the stream's latest state event when it came after the snapshot (`snapshotSeq`,
+// the task detail's lastSeq), else the snapshot. A stream that stalled behind a newer snapshot never overrides it.
+export function liveTask(task: Task, snapshotSeq: number, events: readonly TaskEventEnvelope[]): Task {
+  const latest = events.findLast(envelope => envelope.event.kind === "state");
+  if (!latest || latest.seq <= snapshotSeq || latest.event.kind !== "state") return task;
+  return { ...task, state: latest.event.state, blockedReason: latest.event.blockedReason };
 }
 
 export function workingStatus(lines: readonly StepLine[]): string {

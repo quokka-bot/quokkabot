@@ -70,13 +70,72 @@ jobs:
           fetch-depth: 0
       - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --no-banner --redact --config /repo/.gitleaks.toml
 
-  # The one required status check: branch protection needs only this job, so adding jobs needs no rule change.
+  # Whether this change touches the iPhone app, so its macOS build runs only when it can have changed.
+  changes:
+    name: Changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mobile: ${{ steps.diff.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then echo "mobile=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if git diff --name-only "$BASE" HEAD | grep -qE '^(apps/mobile/|packages/(shared|client)/|pnpm-lock\.yaml|pnpm-workspace\.yaml|scripts/check-mobile-licenses\.mjs|\.github/workflows/ci\.yml)'; then
+            echo "mobile=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "mobile=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Compiles the iPhone app for the simulator, unsigned, from a fresh prebuild: native modules, pods and config
+  # plugins break here before an EAS build would. Then checks the licences of the pods and the JavaScript it ships.
+  mobile-native:
+    name: iPhone app build (macOS)
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true'
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prebuild
+        working-directory: apps/mobile
+        env:
+          APP_VARIANT: production
+          CI: "1"
+        run: npx expo prebuild --platform ios
+      - name: Compile for the simulator
+        working-directory: apps/mobile/ios
+        run: |
+          set -o pipefail
+          xcodebuild -workspace QuokkaBot.xcworkspace -scheme QuokkaBot -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build | tail -n 40
+      - name: Licences of what the app ships
+        working-directory: apps/mobile
+        run: pnpm build
+
+  # The one required status check: branch protection needs only this job, so adding jobs needs no rule change. The
+  # iPhone app build may be skipped only when the change does not touch the app.
   check:
     name: Check
     if: always()
-    needs: [checks, integration, build, secrets]
+    needs: [checks, integration, build, secrets, changes, mobile-native]
     runs-on: ubuntu-latest
     steps:
       - env:
           NEEDS: ${{ toJSON(needs) }}
-        run: echo "$NEEDS" | jq -e 'all(.[]; .result == "success")'
+        run: |
+          echo "$NEEDS" | jq -e '
+            (to_entries | map(select(.key != "mobile-native")) | all(.value.result == "success"))
+            and (.["mobile-native"].result == "success"
+              or (.["mobile-native"].result == "skipped" and .changes.outputs.mobile == "false"))'

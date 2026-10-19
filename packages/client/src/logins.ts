@@ -11,6 +11,14 @@ export function validateTotp(value: string): string {
   throw new Error("2FA must be a base32 secret of at least 16 characters or an otpauth://totp URI containing one.");
 }
 
+// The web form's required fields stop an empty name, username or new password before saving. A native form has no
+// such attribute: it asks this first, so the owner reads one plain line instead of the schema's error.
+export function requireLoginFields(fields: { name: string; username: string; password?: string }): void {
+  if (fields.name.trim() === "") throw new Error("Type a name for this login.");
+  if (fields.username === "") throw new Error("Type the username or email.");
+  if (fields.password === "") throw new Error("Type the password.");
+}
+
 export function loginSites(sites: string): string[] {
   // A pasted address counts as its site: https://www.roblox.com/login is roblox.com, which the server stores as a site.
   const patterns = sites.split(",").map(site => site.trim().toLowerCase()).map(site => URL.canParse(site) && /^https?:\/\//.test(site) ? new URL(site).hostname : site);

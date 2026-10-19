@@ -1,0 +1,46 @@
+import { useState } from "react";
+import { Redirect } from "expo-router";
+import { KeyboardAvoidingView, StyleSheet, Text, TextInput } from "react-native";
+import { PairingCode } from "@quokkabot/shared";
+import { deviceName } from "../../src/device";
+import { useSession, appFetch } from "../../src/session";
+import { signInWithCode } from "../../src/sign-in";
+import { chosenServer, forgetChosenServer } from "../../src/sign-in-flow";
+import { Button, ErrorLine } from "../../src/ui/kit";
+import { colors } from "../../src/ui/theme";
+
+// A code from the server's operator (`pairing-code` on the server), for a server nobody opens in a browser. The code
+// goes only to the server picked on the server screen.
+export default function Code() {
+  const [server] = useState(chosenServer);
+  const { signIn } = useSession();
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const valid = PairingCode.safeParse(code).success;
+  // Opened without a server (a link from outside the app, or after a restart): pick the server first.
+  if (!server) return <Redirect href="/server" />;
+  const submit = async () => {
+    setBusy(true); setError(null);
+    try {
+      const connection = await signInWithCode(appFetch, server, code, deviceName());
+      forgetChosenServer();
+      await signIn(connection);
+    }
+    catch (failure) { setError(failure); }
+    finally { setBusy(false); }
+  };
+  return <KeyboardAvoidingView style={styles.page} behavior="padding">
+    <Text style={styles.lead}>Type the code printed on {new URL(server.origin).host}.</Text>
+    <TextInput style={styles.input} value={code} onChangeText={setCode} placeholder="XXXX-XXXX-XXXX" autoCapitalize="characters" autoCorrect={false}
+      autoComplete="off" textContentType="none" accessibilityLabel="Code" returnKeyType="go" onSubmitEditing={() => { if (valid) void submit(); }} />
+    <Button title="Sign in" busy={busy} disabled={!valid} onPress={() => void submit()} />
+    <ErrorLine error={error} />
+  </KeyboardAvoidingView>;
+}
+
+const styles = StyleSheet.create({
+  page: { flex: 1, padding: 24, gap: 16, backgroundColor: colors.background },
+  lead: { fontSize: 16, color: colors.textSoft, textAlign: "center", marginTop: 12 },
+  input: { minHeight: 56, borderWidth: 1, borderColor: colors.line, borderRadius: 14, paddingHorizontal: 14, fontSize: 24, letterSpacing: 2, textAlign: "center", backgroundColor: colors.card, color: colors.text },
+});

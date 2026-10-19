@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LoginView } from "@quokkabot/shared";
-import { listSites, loginRequestOptions, loginSites, validateTotp } from "../src/index.js";
+import { listSites, loginRequestOptions, loginSites, requireLoginFields, validateTotp } from "../src/index.js";
 import { agentId, at, ownerRequest } from "./fixtures.js";
 
 describe("card helpers", () => {
@@ -48,6 +48,13 @@ describe("login form validation", () => {
 
   it.each(["", "example.com,", "https://", "https://localhost/login", "../example.com"])("rejects invalid site lists: %j", sites => {
     expect(() => loginSites(sites)).toThrow("Invalid site:");
+  });
+
+  it("names the first empty field in one plain line, and leaves a kept password alone", () => {
+    expect(() => requireLoginFields({ name: " ", username: "owner", password: "secret" })).toThrow("Type a name for this login.");
+    expect(() => requireLoginFields({ name: "Example", username: "", password: "secret" })).toThrow("Type the username or email.");
+    expect(() => requireLoginFields({ name: "Example", username: "owner", password: "" })).toThrow("Type the password.");
+    expect(() => requireLoginFields({ name: "Example", username: "owner" })).not.toThrow();
   });
 
   it("preserves valid grouped secrets and authenticator URIs after trimming", () => {

@@ -1,0 +1,52 @@
+{
+  "cli": {
+    "version": ">= 18.0.0",
+    "appVersionSource": "remote",
+    "promptToConfigurePushNotifications": false
+  },
+  "build": {
+    "base": {
+      "node": "24.22.0",
+      "pnpm": "12.14.0",
+      "ios": {
+        "image": "latest"
+      }
+    },
+    "development": {
+      "extends": "base",
+      "env": {
+        "APP_VARIANT": "development"
+      },
+      "environment": "development",
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "simulator": true
+      }
+    },
+    "preview": {
+      "extends": "base",
+      "env": {
+        "APP_VARIANT": "preview"
+      },
+      "environment": "preview",
+      "distribution": "internal"
+    },
+    "production": {
+      "extends": "base",
+      "env": {
+        "APP_VARIANT": "production"
+      },
+      "environment": "production",
+      "distribution": "store",
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "ascAppId": "6824624497"
+      }
+    }
+  }
+}
