@@ -61,6 +61,8 @@ jobs:
 
       - if: steps.token.outputs.present == 'true'
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - if: steps.token.outputs.present == 'true'
         uses: pnpm/action-setup@v6
       - if: steps.token.outputs.present == 'true'

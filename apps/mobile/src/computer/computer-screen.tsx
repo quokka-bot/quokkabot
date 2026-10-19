@@ -6,7 +6,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import type { AgentSummary, TakeoverFocusResponse } from "@quokkabot/shared";
 import { useSignedIn } from "../session";
-import { handBack, setAttended } from "./actions";
+import { askedTakeover, handBack, setAttended } from "./actions";
 import { Viewer } from "./viewer";
 
 type Field = NonNullable<TakeoverFocusResponse["field"]>;
@@ -28,10 +28,13 @@ export function ComputerScreen({ agentId }: { agentId: string }) {
     const subscription = AppState.addEventListener("change", (state) => setActive(state === "active"));
     return () => subscription.remove();
   }, []);
-  const inbox = useQuery({ queryKey: [connection.origin, "inbox"], queryFn: api.inbox });
+  const inbox = useQuery({ queryKey: [connection.origin, "inbox"], queryFn: api.inbox, refetchInterval: 5_000 });
   const run = async (work: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setError(null);
-    try { await work(); await client.invalidateQueries({ queryKey: [connection.origin, "agent", agentId] }); }
+    try {
+      await work();
+      await Promise.all([client.invalidateQueries({ queryKey: [connection.origin, "agent", agentId] }), client.invalidateQueries({ queryKey: [connection.origin, "inbox"] })]);
+    }
     catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
     finally { setBusy(false); }
   };
@@ -40,8 +43,7 @@ export function ComputerScreen({ agentId }: { agentId: string }) {
   const running = data?.computer.state === "running";
   const killed = data?.computer.state === "killed";
   // A takeover the agent asked for ends with "I'm done", which tells the agent; one the owner started hands back.
-  const asked = inbox.data?.items.find((item) => item.kind === "owner_request" && item.agentId === agentId && item.request.kind === "takeover" && item.request.answeredAt === null);
-  const askedTaskId = asked?.kind === "owner_request" ? asked.request.taskId : null;
+  const asked = inbox.data ? askedTakeover(inbox.data, agentId) !== null : false;
   const attendedOpen = data?.computer.attendedOpen ?? false;
   const stopEverything = () => Alert.alert("Stop everything?", "Closes this agent's network and stops its computer. Starting it again needs your passkey in the web app.", [
     { text: "Cancel", style: "cancel" },
@@ -67,7 +69,7 @@ export function ComputerScreen({ agentId }: { agentId: string }) {
       {holder === "owner" && <NativeFields agentId={agentId} />}
       <View style={styles.controls}>
         {holder === "owner"
-          ? <Pressable accessibilityRole="button" style={styles.pill} disabled={busy} onPress={() => handBack(connection.origin, agentId, askedTaskId, api, (work) => void run(work))}><Text style={styles.pillText}>{asked ? "I'm done, continue" : "Hand back"}</Text></Pressable>
+          ? <Pressable accessibilityRole="button" style={styles.pill} disabled={busy} onPress={() => handBack(connection.origin, agentId, api, (work) => void run(work))}><Text style={styles.pillText}>{asked ? "I'm done, continue" : "Hand back"}</Text></Pressable>
           : <Pressable accessibilityRole="button" style={styles.pill} disabled={busy || killed} onPress={() => void run(() => api.takeover(agentId, "take"))}><Text style={styles.pillText}>Take over</Text></Pressable>}
         <Pressable accessibilityRole="button" style={[styles.pill, styles.quiet]} onPress={() => setRevision((value) => value + 1)}><Text style={styles.quietText}>Refresh view</Text></Pressable>
       </View>
