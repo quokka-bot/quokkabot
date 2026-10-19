@@ -10,6 +10,8 @@ import { colors } from "../src/ui/theme";
 // Server data refreshes when the app comes back to the front, as the web app does when its tab does.
 AppState.addEventListener("change", (state) => focusManager.setFocused(state === "active"));
 
+export const unstable_settings = { initialRouteName: "index" };
+
 export default function RootLayout() {
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 5_000 } } }));
   return <SafeAreaProvider>
@@ -29,14 +31,11 @@ function Screens() {
   const signedIn = session.state === "signed-in";
   return <Stack screenOptions={{ headerTintColor: colors.text, headerShadowVisible: false, headerStyle: { backgroundColor: colors.background }, contentStyle: { backgroundColor: colors.background } }}>
     <Stack.Protected guard={!signedIn}>
-      <Stack.Screen name="welcome" options={{ headerShown: false }} />
-      <Stack.Screen name="server" options={{ title: "Your server" }} />
-      <Stack.Screen name="scan" options={{ title: "Scan the QR code", presentation: "modal" }} />
-      <Stack.Screen name="link" options={{ title: "Approve this phone" }} />
-      <Stack.Screen name="code" options={{ title: "Sign in with a code" }} />
+      <Stack.Screen name="(auth)" options={{ headerShown: false }} />
     </Stack.Protected>
+    <Stack.Screen name="index" options={{ headerShown: false }} />
     <Stack.Protected guard={signedIn}>
-      <Stack.Screen name="index" options={{ title: "Agents", headerLargeTitle: true }} />
+      <Stack.Screen name="agents/index" options={{ title: "Agents", headerLargeTitle: true }} />
       <Stack.Screen name="agents/[agentId]" options={{ title: "" }} />
       <Stack.Screen name="computer/[agentId]" options={{ headerShown: false, presentation: "fullScreenModal" }} />
       <Stack.Screen name="settings" options={{ title: "Settings" }} />

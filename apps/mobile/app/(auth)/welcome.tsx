@@ -4,11 +4,11 @@ import * as WebBrowser from "expo-web-browser";
 import * as Passkeys from "react-native-passkeys";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { deviceName, passkeyDomain, PRIVACY_URL, SUPPORT_URL } from "../src/device";
-import { useSession, appFetch } from "../src/session";
-import { discover, signInWithPasskey } from "../src/sign-in";
-import { AgentAvatar, Button, ErrorLine } from "../src/ui/kit";
-import { colors } from "../src/ui/theme";
+import { deviceName, passkeyDomain, PRIVACY_URL, SUPPORT_URL } from "../../src/device";
+import { useSession, appFetch } from "../../src/session";
+import { discover, signInWithPasskey } from "../../src/sign-in";
+import { AgentAvatar, Button, ErrorLine } from "../../src/ui/kit";
+import { colors } from "../../src/ui/theme";
 
 export default function Welcome() {
   const { session, signIn } = useSession();

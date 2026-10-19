@@ -61,7 +61,6 @@ const config: ExpoConfig = {
     ["expo-camera", { cameraPermission: "Scan the QR code your Quokka Bot server shows, to connect to it.", microphonePermission: false, recordAudioAndroid: false }],
     ["expo-splash-screen", { image: "./assets/splash.png", imageWidth: 160, backgroundColor: "#1A2F7A" }],
   ],
-  experiments: { typedRoutes: true },
   // Over-the-air updates reach only builds with the same native code and the same app version: a fix ships over
   // the air, a new feature ships in a reviewed build with a new version (fingerprint.config.js adds the version).
   runtimeVersion: { policy: "fingerprint" },

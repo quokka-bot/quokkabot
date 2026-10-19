@@ -6,7 +6,7 @@
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
-    "build": "expo export --platform ios --output-dir dist --no-minify",
+    "build": "expo export --platform ios --output-dir dist --dump-sourcemap && node ../../scripts/check-mobile-licenses.mjs dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "ios": "APP_VARIANT=development expo run:ios",
     "eas:dev": "eas build --profile development --platform ios",

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { router, useLocalSearchParams } from "expo-router";
+import { Redirect, router, useLocalSearchParams } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import Constants from "expo-constants";
 import { StyleSheet, Text, View } from "react-native";
-import { useSession, appFetch } from "../src/session";
-import { waitForLink } from "../src/sign-in";
-import { Button, ErrorLine } from "../src/ui/kit";
-import { colors } from "../src/ui/theme";
+import { useSession, appFetch } from "../../src/session";
+import { waitForLink } from "../../src/sign-in";
+import { Button, ErrorLine } from "../../src/ui/kit";
+import { colors } from "../../src/ui/theme";
 
 // The phone's sign-in link: the owner approves this code with their passkey, on this phone (the server's own page in
 // a browser sheet) or on a computer where they are signed in (Settings, Connect a phone). The phone polls; the
@@ -18,6 +18,7 @@ export default function Link() {
   const [error, setError] = useState<unknown>(null);
   const stopped = useRef(false);
   useEffect(() => {
+    if (!params.origin || !params.pollToken) return;
     stopped.current = false;
     void waitForLink(appFetch, params.origin, params.pollToken, () => stopped.current).then(async (result) => {
       if ("token" in result) {
@@ -29,6 +30,7 @@ export default function Link() {
     }).catch(setError);
     return () => { stopped.current = true; };
   }, [params.origin, params.viewOrigin, params.pollToken, signIn]);
+  if (!params.origin || !params.pollToken || !params.userCode || !params.verifyUrl) return <Redirect href="/server" />;
   const host = new URL(params.origin).host;
   // The sheet closes itself once the poll sees the approval; the scheme is only there to let the page close it too.
   const approveHere = () => void WebBrowser.openAuthSessionAsync(params.verifyUrl, `${String(Constants.expoConfig?.scheme ?? "quokkabot")}://linked`).catch(setError);

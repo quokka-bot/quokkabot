@@ -9,6 +9,8 @@ For people and coding agents changing this repository.
 - `apps/web`: the web app (Vite, React). `apps/desktop`: the Mac app (Electron) around it.
 - `apps/site`: quokkabot.com (Astro, static): home, privacy policy, support. No scripts, nothing loaded from other
   origins; it deploys to Cloudflare Pages from main.
+- `apps/mobile`: the iPhone app (Expo, React Native); docs/mobile.md. `packages/client`: chat logic the web and
+  iPhone apps share (no React, no DOM).
 - `apps/supervisor`: starts and stops each agent's sandboxes (Docker with gVisor).
 - `apps/browser-service`: drives Chrome inside the browser sandbox; types vault values the model never sees.
 - `apps/egress`: the proxy every agent request goes through; default deny.

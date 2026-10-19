@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { useLocalSearchParams } from "expo-router";
+import { Redirect, useLocalSearchParams } from "expo-router";
 import { KeyboardAvoidingView, StyleSheet, Text, TextInput } from "react-native";
 import { PairingCode } from "@quokkabot/shared";
-import { deviceName } from "../src/device";
-import { useSession, appFetch } from "../src/session";
-import { signInWithCode } from "../src/sign-in";
-import { Button, ErrorLine } from "../src/ui/kit";
-import { colors } from "../src/ui/theme";
+import { deviceName } from "../../src/device";
+import { useSession, appFetch } from "../../src/session";
+import { signInWithCode } from "../../src/sign-in";
+import { Button, ErrorLine } from "../../src/ui/kit";
+import { colors } from "../../src/ui/theme";
 
 // A code from the server's operator (`pairing-code` on the server), for a server nobody opens in a browser.
 export default function Code() {
@@ -16,6 +16,8 @@ export default function Code() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const valid = PairingCode.safeParse(code).success;
+  // Opened without a server (a stale link): pick the server first.
+  if (!params.origin || !params.viewOrigin) return <Redirect href="/server" />;
   const submit = async () => {
     setBusy(true); setError(null);
     try { await signIn(await signInWithCode(appFetch, { origin: params.origin, viewOrigin: params.viewOrigin }, code, deviceName())); }

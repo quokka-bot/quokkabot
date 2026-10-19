@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { router, useLocalSearchParams } from "expo-router";
 import { KeyboardAvoidingView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { deviceName } from "../src/device";
-import { appFetch } from "../src/session";
-import { discover, serverOrigin, startLink } from "../src/sign-in";
-import { Button, ErrorLine } from "../src/ui/kit";
-import { colors } from "../src/ui/theme";
+import { deviceName } from "../../src/device";
+import { appFetch } from "../../src/session";
+import { discover, serverOrigin, startLink } from "../../src/sign-in";
+import { Button, ErrorLine } from "../../src/ui/kit";
+import { colors } from "../../src/ui/theme";
 
 // A self-hosted server: its address, typed or scanned from Settings, Connect a phone. Then a link the owner approves
 // with their passkey, or a code from the server's operator.

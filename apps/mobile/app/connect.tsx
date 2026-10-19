@@ -5,6 +5,6 @@ import { useSession } from "../src/session";
 export default function Connect() {
   const { server } = useLocalSearchParams<{ server?: string }>();
   const { session } = useSession();
-  if (session.state === "signed-in") return <Redirect href="/" />;
+  if (session.state === "signed-in") return <Redirect href="/agents" />;
   return <Redirect href={{ pathname: "/server", params: server ? { server } : {} }} />;
 }

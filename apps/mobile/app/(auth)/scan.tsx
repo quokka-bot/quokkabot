@@ -2,9 +2,9 @@ import { useRef } from "react";
 import { router } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { StyleSheet, Text, View } from "react-native";
-import { serverOrigin } from "../src/sign-in";
-import { Button } from "../src/ui/kit";
-import { colors } from "../src/ui/theme";
+import { serverOrigin } from "../../src/sign-in";
+import { Button } from "../../src/ui/kit";
+import { colors } from "../../src/ui/theme";
 
 // Reads the QR code from Settings, Connect a phone. It holds only the server's address; the address is checked and
 // approved on the next screens like a typed one.
