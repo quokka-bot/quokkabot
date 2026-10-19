@@ -58,7 +58,7 @@ const config: ExpoConfig = {
     "expo-secure-store",
     "expo-web-browser",
     ["expo-camera", { cameraPermission: "Scan the QR code your Quokka Bot server shows, to connect to it.", microphonePermission: false, recordAudioAndroid: false }],
-    ["expo-splash-screen", { image: "./assets/splash.png", imageWidth: 160, backgroundColor: "#7442D1" }],
+    ["expo-splash-screen", { image: "./assets/splash.png", imageWidth: 160, backgroundColor: "#ffffff" }],
   ],
   ...(owner ? { owner } : {}),
   extra: {
