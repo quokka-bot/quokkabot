@@ -76,8 +76,9 @@ export function ComputerScreen({ agentId }: { agentId: string }) {
 }
 
 // A native field for the password or code field focused on the computer. The owner taps the field in the live view,
-// then "Type a password or code"; the field shows which site it types into, and checks that site again on the computer
-// when filling.
+// then "Type a password or code"; the field shows which site it types into. The check returns a handle for that one
+// field, valid once and for a minute: if the page changed, a new field took focus or the takeover ended, nothing is
+// typed and the owner checks again.
 function NativeFields({ agentId }: { agentId: string }) {
   const { api } = useSignedIn();
   const [field, setField] = useState<Field | null>(null);
@@ -99,7 +100,8 @@ function NativeFields({ agentId }: { agentId: string }) {
     if (!field || value === "") return;
     setBusy(true); setMessage(null);
     try {
-      await api.takeoverFill(agentId, { kind: field.kind, value, expectedOrigin: field.origin, submit });
+      // The handle names the exact field checked above; the computer types only into it, under this takeover.
+      await api.takeoverFill(agentId, { kind: field.kind, value, focusId: field.focusId, submit });
       setMessage(submit ? "Typed and sent." : "Typed.");
       setField(null);
     } catch (failure) { setMessage(failure instanceof Error ? failure.message : String(failure)); }
