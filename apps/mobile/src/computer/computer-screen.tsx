@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { Alert, AppState, KeyboardAvoidingView, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import type { AgentSummary, TakeoverFocusResponse } from "@quokkabot/shared";
 import { withConsent } from "../consent";
 import { useSignedIn } from "../session";
@@ -50,6 +51,8 @@ export function ComputerScreen({ agentId }: { agentId: string }) {
   ]);
   const status = killed ? "Stopped with the kill switch" : !running ? "The computer is off" : holder === "owner" ? "You have control" : holder === "agent" ? `${data?.name ?? "The agent"} is driving` : "Paused";
   return <SafeAreaView style={styles.page} edges={["top", "bottom"]}>
+    {/* The whole screen is the computer's: no clock or battery over its controls. */}
+    <StatusBar hidden />
     <View style={styles.bar}>
       <Pressable accessibilityRole="button" onPress={() => router.back()} hitSlop={12}><Text style={styles.barButton}>Done</Text></Pressable>
       <Text style={styles.status} accessibilityLiveRegion="polite" numberOfLines={1}>{status}</Text>
