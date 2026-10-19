@@ -1,8 +1,9 @@
 import { z } from "zod";
 import {
-  AgentSummary, AgentsResponse, ApiError, ControlLease, CreateTaskRequest, DecideDomainRequest, DomainsView, EmptyResponse,
+  AgentSummary, AgentsResponse, ApiError, ComputerView, ControlLease, CreateTaskRequest, DecideDomainRequest, DomainsView, EmptyResponse,
   InboxResponse, LoginView, Me, ReactionRequest, type ReactionEmoji, ReplyRequest, SaveLoginRequest, SessionView,
-  TakeoverDoneRequest, TakeoverRequest, Task, TaskDetail, TaskPage, UpdateLoginRequest, ViewTicketResponse,
+  TakeoverDoneRequest, TakeoverFillRequest, TakeoverFillResponse, TakeoverFocusResponse, TakeoverRequest, Task, TaskDetail,
+  TaskPage, UpdateLoginRequest, ViewTicketResponse,
 } from "@quokkabot/shared";
 
 export class ApiFailure extends Error {
@@ -97,6 +98,13 @@ export function createApi(fetchImpl: Fetch, origin: string, token: string, onSig
     saveLogin: (id: string, input: z.input<typeof SaveLoginRequest>) => request(`${agentPath(id)}/logins`, LoginView, "POST", SaveLoginRequest.parse(input)),
     updateLogin: (id: string, input: z.input<typeof UpdateLoginRequest>) => request(`/logins/${encodeURIComponent(id)}`, LoginView, "PUT", UpdateLoginRequest.parse(input)),
     decideDomain: (id: string, decision: "allow_task" | "allow_always" | "refuse", attended: boolean) => request(`/domain-requests/${encodeURIComponent(id)}/decide`, DomainsView, "POST", DecideDomainRequest.parse({ decision, attended })),
+    startComputer: (id: string) => request(`${agentPath(id)}/computer/start`, ComputerView, "POST", {}),
+    // The kill switch: closes the agent's network and stops its sandboxes. Releasing it needs a passkey check on the web.
+    kill: (id: string) => request(`${agentPath(id)}/kill`, ComputerView, "POST", {}),
+    // During the owner's takeover: which field is focused on the computer (its site and kind, never its value), and
+    // typing the phone's native field into it.
+    takeoverFocus: (id: string) => request(`${agentPath(id)}/takeover/focus`, TakeoverFocusResponse),
+    takeoverFill: (id: string, input: z.input<typeof TakeoverFillRequest>) => request(`${agentPath(id)}/takeover/fill`, TakeoverFillResponse, "POST", TakeoverFillRequest.parse(input)),
     // The live view's one-time URL on the server's viewer origin; the phone opens nothing else in its viewer.
     viewTicket: async (id: string, viewOrigin: string) => {
       const ticket = await request(`${agentPath(id)}/view-ticket`, ViewTicketResponse, "POST", {});
