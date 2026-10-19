@@ -199,6 +199,23 @@ export const SecretFillRequest = z
   .strict();
 export type SecretFillRequest = z.infer<typeof SecretFillRequest>;
 
+// The owner's native fields never pass through a model tool. Only the current owner lease may inspect or fill
+// the inspected element. The single-use handle binds the lease, document and origin checked at insertion.
+export const OwnerFieldKind = z.enum(["password", "code"]);
+export type OwnerFieldKind = z.infer<typeof OwnerFieldKind>;
+export const OwnerFocusId = z.string().regex(/^[a-f0-9]{64}$/);
+export const OwnerFocusResult = z.object({ field: z.object({ origin: z.string(), kind: OwnerFieldKind, focusId: OwnerFocusId }).strict().nullable() }).strict();
+export type OwnerFocusResult = z.infer<typeof OwnerFocusResult>;
+export const OwnerFillRequest = z.object({
+  commandId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/),
+  leaseGeneration: z.number().int().min(1),
+  kind: OwnerFieldKind,
+  value: z.string().min(1).max(500),
+  focusId: OwnerFocusId,
+  submit: z.boolean(),
+}).strict();
+export type OwnerFillRequest = z.infer<typeof OwnerFillRequest>;
+
 
 // POST /v1/site-data/clear: when an attended session ends, every cookie and every origin's storage that matches one of
 // the patterns is removed (any subdomain, http and https). The response lists what was cleared; an error means some of

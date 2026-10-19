@@ -6,6 +6,8 @@ import {
   BrowserCommandResult,
   type BrowserCommandRequest,
   type SecretFillRequest,
+  type OwnerFillRequest,
+  OwnerFocusResult,
   ComputerStatus,
   type ControlLease,
   DownloadInfo,
@@ -287,6 +289,28 @@ export class BrowserServiceClient {
   // The value goes only to the browser service, which types it through DevTools after checking site and field.
   secretFill(request: SecretFillRequest): Promise<BrowserCommandResult> {
     return jsonCall(this.base(), this.token, "POST", "/v1/secret-fill", request, BrowserCommandResult, 60_000);
+  }
+  async ownerFocus(generation: number): Promise<OwnerFocusResult> {
+    try {
+      return await jsonCall(this.base(), this.token, "GET", `/v1/owner-focus?generation=${generation}`, undefined, OwnerFocusResult, 60_000);
+    } catch (error) {
+      let blocked = false;
+      if (error instanceof UpstreamError && error.status === 409) {
+        try { blocked = JSON.parse(error.body).status === "blocked"; } catch { /* An invalid reply is a failure. */ }
+      }
+      throw new UpstreamError("owner focus failed", blocked ? 409 : null, "");
+    }
+  }
+  async ownerFill(request: OwnerFillRequest): Promise<BrowserCommandResult> {
+    try {
+      const result = await jsonCall(this.base(), this.token, "POST", "/v1/owner-fill", request, BrowserCommandResult, 60_000);
+      // Only the browser's bound handle knows the insertion's origin. The phone cannot choose the audit site.
+      if (result.status === "ok" && (!result.url || new URL(result.url).origin !== result.url)) throw new Error("missing owner fill origin");
+      return result;
+    } catch {
+      // Neither transport errors nor an invalid reply may echo the native field's value.
+      throw new Error("owner fill failed");
+    }
   }
   commandResult(commandId: string): Promise<BrowserCommandResult> {
     return jsonCall(this.base(), this.token, "GET", `/v1/commands/${commandId}`, undefined, BrowserCommandResult, 10_000);

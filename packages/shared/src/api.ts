@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AttachmentIds } from "./attachments.js";
 import { AuditEvent } from "./audit.js";
-import { ControlLease } from "./browser.js";
+import { ControlLease, OwnerFillRequest, OwnerFocusResult } from "./browser.js";
 import { EgressDecision } from "./egress.js";
 import {
   AgentId,
@@ -119,11 +119,21 @@ export type AgentsResponse = z.infer<typeof AgentsResponse>;
 // POST /api/agents/:agentId/kill                    -> ComputerView   (no confirmation; instant)
 // POST /api/agents/:agentId/kill/release            -> ComputerView   (needs fresh auth)
 // POST /api/agents/:agentId/takeover  { action }     -> ControlLease
+// GET  /api/agents/:agentId/takeover/focus           -> TakeoverFocusResponse
+// POST /api/agents/:agentId/takeover/fill            -> TakeoverFillResponse
 // POST /api/agents/:agentId/attended  { open }       -> ComputerView
 // POST /api/agents/:agentId/view-ticket              -> { url }  (one-time URL on the viewer origin)
 // GET  /api/agents/:agentId/terminal (WebSocket)     needs fresh auth; frames are TerminalClientFrame/ServerFrame
 export const AgentSettingsRequest = z.object({ name: AgentName.optional(), model: ModelId, effort: Effort }).strict();
 export const TakeoverRequest = z.object({ action: z.enum(["take", "return"]) }).strict();
+// Native fields during the owner's takeover. Fill echoes the inspected focusId, never a caller-chosen origin.
+// The browser binds that short-lived handle to the inspected lease. Neither response returns a typed value.
+export const TakeoverFocusResponse = OwnerFocusResult;
+export type TakeoverFocusResponse = z.infer<typeof TakeoverFocusResponse>;
+export const TakeoverFillRequest = OwnerFillRequest.omit({ commandId: true, leaseGeneration: true });
+export type TakeoverFillRequest = z.infer<typeof TakeoverFillRequest>;
+export const TakeoverFillResponse = z.object({ ok: z.literal(true) }).strict();
+export type TakeoverFillResponse = z.infer<typeof TakeoverFillResponse>;
 export const AttendedRequest = z.object({ open: z.boolean() }).strict();
 export const ViewTicketResponse = z.object({ url: z.string() });
 

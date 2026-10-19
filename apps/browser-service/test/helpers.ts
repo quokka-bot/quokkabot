@@ -92,6 +92,8 @@ export class FakeCdp extends EventEmitter implements CdpConnection {
   }];
   private worlds = new Map<string, string>();
   private nextWorld = new Map<string, number>();
+  private objects = new Map<string, { frame: FakeFrame; element: unknown; contextId: number }>();
+  private nextObject = 0;
   async connect(): Promise<void> { this.connected = true; }
   async send(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<unknown> {
     this.calls.push({ method, params, ...(sessionId === undefined ? {} : { sessionId }) });
@@ -121,7 +123,7 @@ export class FakeCdp extends EventEmitter implements CdpConnection {
         }
         return branch(frame);
       }
-      return { frameTree: tree(this.frames, null) };
+      return { frameTree: tree(this.frames.filter((frame) => (frame.pageTarget ?? "target_1") === sessionId?.slice("session_".length)), null) };
     }
     if (method === "Page.createIsolatedWorld") {
       const frame = this.frames.find((frame) => frame.id === params.frameId);
@@ -135,70 +137,116 @@ export class FakeCdp extends EventEmitter implements CdpConnection {
     }
     if (method === "Runtime.evaluate") {
       const frameId = this.worlds.get(`${sessionId}:${Number(params.contextId)}`);
-      if (!sessionId || frameId === undefined || params.returnByValue !== true || params.silent !== true) {
+      if (!sessionId || frameId === undefined || typeof params.returnByValue !== "boolean" || params.silent !== true) {
         throw new Error("Fake CDP refuses main-world or unsafe evaluation");
       }
       const frame = this.frames.find((item) => item.id === frameId);
       if (!frame) throw new Error("Isolated world frame disappeared");
-      return { result: { type: "object", ...(frame.field === null ? { subtype: "null" } : {}), value: frame.field } };
+      const value = runInFakePage(`function () { return ${String(params.expression)}; }`, frame, []);
+      if (!params.returnByValue && value !== null) {
+        const objectId = `object_${++this.nextObject}`;
+        this.objects.set(objectId, { frame, element: value, contextId: Number(params.contextId) });
+        return { result: { type: "object", subtype: "node", objectId } };
+      }
+      return { result: { type: "object", ...(value === null ? { subtype: "null" } : {}), value } };
     }
     if (method === "Runtime.callFunctionOn") {
-      const frameId = this.worlds.get(`${sessionId}:${Number(params.executionContextId)}`);
-      if (!sessionId || frameId === undefined || params.returnByValue !== true || params.silent !== true || "objectId" in params) {
+      const object = this.objects.get(String(params.objectId));
+      const frameId = this.worlds.get(`${sessionId}:${object?.contextId ?? Number(params.executionContextId)}`);
+      if (!sessionId || frameId === undefined || params.returnByValue !== true || params.silent !== true || ("objectId" in params && !object)) {
         throw new Error("Fake CDP refuses main-world or unsafe calls");
       }
       const frame = this.frames.find((item) => item.id === frameId);
       if (!frame) throw new Error("Isolated world frame disappeared");
-      const args = (params.arguments as { value: unknown }[]).map((argument) => argument.value);
-      return { result: { type: "string", value: runInFakePage(String(params.functionDeclaration), frame, args) } };
+      const args = ((params.arguments ?? []) as { value: unknown }[]).map((argument) => argument.value);
+      return { result: { type: "string", value: runInFakePage(String(params.functionDeclaration), frame, args, object?.element) } };
     }
+    if (method === "Runtime.releaseObject") this.objects.delete(String(params.objectId));
     if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0, clientWidth: 1280, clientHeight: 800 } };
     if (method === "Page.captureScreenshot") return { data: PNG.toString("base64") };
     return {};
   }
   close(): void { if (this.connected) { this.connected = false; this.emit("disconnect"); } }
-  event(method: string, params: unknown, sessionId?: string): void { this.emit("event", method, params, sessionId); }
+  event(method: string, params: unknown, sessionId?: string): void {
+    if (method === "Page.frameNavigated" || method === "Page.frameDetached") {
+      const id = (params as { frame?: { id: string }; frameId?: string }).frame?.id ?? (params as { frameId?: string }).frameId;
+      for (const [world, frameId] of this.worlds) if (frameId === id) this.worlds.delete(world);
+    }
+    this.emit("event", method, params, sessionId);
+  }
 }
 export interface FakeFrame {
   id: string;
   origin: string;
   parentId: string | null;
   outOfProcess?: boolean;
-  field: { tag: string; type: string; autocomplete: string; maxLength: number; inputMode: string; disabled: boolean; readOnly: boolean; hints: string } | null;
+  pageTarget?: string;
+  field: { tag: string; type: string; autocomplete: string; maxLength: number; inputMode: string; disabled: boolean; readOnly: boolean; hints: string; name?: string; id?: string; placeholder?: string; ariaLabel?: string } | null;
+  hidden?: boolean;
+  inert?: boolean;
+  zeroBox?: boolean;
+  offscreen?: boolean;
+  documentHidden?: boolean;
+  echo?: string;
+  echoInput?: boolean;
   // What the page's field holds after an insertion.
   inserted?: string;
 }
 
 // Runs the browser service's in-page function against a minimal DOM built from the fake frame, so the real check
 // and insertion code is what the tests exercise.
-function runInFakePage(functionDeclaration: string, frame: FakeFrame, args: unknown[]): unknown {
-  class HTMLInputElement {
-    localName = "input"; shadowRoot = null; value = "";
-    constructor(readonly spec: NonNullable<FakeFrame["field"]>) {}
-    get type(): string { return this.spec.type; }
-    get autocomplete(): string { return this.spec.autocomplete; }
-    get maxLength(): number { return this.spec.maxLength; }
-    get inputMode(): string { return this.spec.inputMode; }
-    get disabled(): boolean { return this.spec.disabled; }
-    get readOnly(): boolean { return this.spec.readOnly; }
-    get name(): string { return this.spec.hints; }
-    id = ""; placeholder = "";
-    getAttribute(): string | null { return null; }
-    select(): void { this.value = ""; }
+const fakePages = new WeakMap<FakeFrame, { document: object; inputClass: unknown; element(spec: FakeFrame["field"]): unknown }>();
+function runInFakePage(functionDeclaration: string, frame: FakeFrame, args: unknown[], receiver?: unknown): unknown {
+  let page = fakePages.get(frame);
+  if (!page) {
+    class HTMLInputElement {
+      localName = "input"; shadowRoot = null; value = ""; parentElement = null;
+      constructor(readonly spec: NonNullable<FakeFrame["field"]>) {}
+      get type(): string { return this.spec.type; }
+      get autocomplete(): string { return this.spec.autocomplete; }
+      get maxLength(): number { return this.spec.maxLength; }
+      get inputMode(): string { return this.spec.inputMode; }
+      get disabled(): boolean { return this.spec.disabled; }
+      get readOnly(): boolean { return this.spec.readOnly; }
+      get name(): string { return this.spec.name ?? this.spec.hints; }
+      get isConnected(): boolean { return frame.field === this.spec; }
+      get ownerDocument(): object { return document; }
+      get inert(): boolean { return frame.inert ?? false; }
+      get hidden(): boolean { return frame.hidden ?? false; }
+      get id(): string { return this.spec.id ?? ""; }
+      get placeholder(): string { return this.spec.placeholder ?? ""; }
+      getRootNode(): object { return document; }
+      getAttribute(name: string): string | null { return name === "aria-label" ? this.spec.ariaLabel ?? null : null; }
+      checkVisibility(): boolean { return !frame.hidden; }
+      getBoundingClientRect(): object { return { width: frame.zeroBox ? 0 : 100, height: 20, top: 0, bottom: 20, left: frame.offscreen ? -200 : 0, right: frame.offscreen ? -100 : 100 }; }
+      select(): void { this.value = ""; }
+    }
+    const elements = new Map<object, unknown>();
+    const element = (spec: FakeFrame["field"]): unknown => {
+      if (spec === null) return null;
+      if (!elements.has(spec)) elements.set(spec, spec.tag === "input" ? new HTMLInputElement(spec) : { localName: spec.tag, shadowRoot: null });
+      return elements.get(spec);
+    };
+    const document = {
+      hasFocus: () => frame.field !== null,
+      get activeElement() { return element(frame.field); },
+      get visibilityState() { return frame.documentHidden ? "hidden" : "visible"; },
+      execCommand: (command: string, _ui: boolean, text: string) => {
+        const input = element(frame.field);
+        if (command !== "insertText" || !(input instanceof HTMLInputElement)) return false;
+        input.value = input.maxLength > 0 ? text.slice(0, input.maxLength) : text;
+        frame.inserted = input.value;
+        if (frame.echoInput) frame.echo = `You entered ${input.value}`;
+        return true;
+      },
+    };
+    page = { document, inputClass: HTMLInputElement, element };
+    fakePages.set(frame, page);
   }
-  const spec = frame.field;
-  const element = spec === null ? null : spec.tag === "input" ? new HTMLInputElement(spec) : { localName: spec.tag, shadowRoot: null };
-  const document = {
-    hasFocus: () => element !== null,
-    activeElement: element,
-    execCommand: (command: string, _ui: boolean, text: string) => {
-      if (command !== "insertText" || !(element instanceof HTMLInputElement)) return false;
-      element.value = element.maxLength > 0 ? text.slice(0, element.maxLength) : text;
-      frame.inserted = element.value;
-      return true;
-    },
-  };
-  return runInNewContext(`(${functionDeclaration})(...args)`, { document, location: { origin: frame.origin }, HTMLInputElement, args });
+  return runInNewContext(`(${functionDeclaration}).apply(receiver, args)`, {
+    document: page.document, location: { origin: frame.origin }, HTMLInputElement: page.inputClass, URL, args, receiver,
+    innerWidth: 1280, innerHeight: 800, getComputedStyle: () => ({ visibility: frame.hidden ? "hidden" : "visible", display: frame.hidden ? "none" : "block", opacity: "1" }),
+  });
 }
 export interface Harness {
   service: BrowserService;

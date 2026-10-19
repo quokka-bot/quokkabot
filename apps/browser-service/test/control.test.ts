@@ -173,7 +173,7 @@ describe("daemon stream safety and outcome uncertainty", () => {
 describe("authenticated service endpoints", () => {
   it("rejects missing and wrong tokens for every route", async () => {
     const h = await setup();
-    for (const path of ["/health", "/v1/commands", "/v1/secret-fill", "/v1/control-lease", "/v1/downloads", "/v1/shutdown", "/v1/site-data/clear"]) {
+    for (const path of ["/health", "/v1/commands", "/v1/secret-fill", "/v1/owner-focus?generation=3", "/v1/owner-fill", "/v1/control-lease", "/v1/downloads", "/v1/shutdown", "/v1/site-data/clear"]) {
       expect((await h.service.handle({ method: "GET", path })).statusCode).toBe(401);
       expect((await h.service.handle({ method: "POST", path, authorization: "Bearer wrong-token" })).statusCode).toBe(401);
     }

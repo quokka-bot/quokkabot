@@ -230,10 +230,14 @@ describe("secret fill", () => {
       { id: "frame_login", origin: "https://example.com", parentId: "frame_main", field: focusedField, outOfProcess: true },
     ];
     const request = await requestFor(h);
-    h.cdp.onSend = (method) => {
-      if (method === "Runtime.evaluate" && h.cdp.calls.at(-1)?.sessionId === "session_frame_login") {
+    const send = h.cdp.send.bind(h.cdp);
+    h.cdp.send = async (method, params, sessionId) => {
+      const result = await send(method, params, sessionId);
+      // Chrome read the old field, then destroyed that world before the service can insert.
+      if (method === "Runtime.evaluate" && sessionId === "session_frame_login") {
         h.cdp.event("Page.frameNavigated", { frame: { id: "frame_login" } }, "session_frame_login");
       }
+      return result;
     };
     expect(await fill(h, request)).toMatchObject({ status: "invalid", message: "take a new snapshot" });
     expect(inputs(h)).toEqual([]);

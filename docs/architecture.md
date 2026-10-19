@@ -61,6 +61,12 @@ executes it. There is no eval, cookie, storage, raw DevTools, upload or clipboar
 - **Browser.** The agent never touches Chrome's DevTools port. Password and code fields are hidden in snapshots and
   refused for typing: the owner types them through the live view. Downloads land in a staging folder, the browser
   service streams them to control, and control hashes and publishes them into Downloads.
+  During the owner's takeover, native password and code fields send values directly to the browser service using a
+  single-use focus handle, valid for at most a minute, bound to the inspected element, document, site and owner lease.
+  Insertion rechecks focus, visibility, origin and a page-side deadline; lease changes wait for its reply and deadline.
+  Owner-filled documents refuse snapshots and screenshots until another document loads; Chrome's back/forward cache
+  is disabled, and unexpected history restores retain protection. Agent vault fills still allow masked snapshots.
+  Values never reach the model or audit; a successful fill audits only the kind and the browser-confirmed hostname.
 - **Network.** The CLI reaches only the model provider. The browser reaches only sites the owner allowed; the proxy
   checks the name before any DNS lookup, refuses private, loopback, metadata and the host's own addresses, and closes
   open connections when a grant is removed. Government and bank sites can be marked "attended": reachable only while the

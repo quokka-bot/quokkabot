@@ -1,6 +1,10 @@
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 
+export const CDP_COMMAND_TIMEOUT_MS = 5000;
+// A queued owner insertion expires inside Chrome before a transport timeout can release the lease fence.
+export const OWNER_INSERTION_WINDOW_MS = 1000;
+
 export interface CdpConnection {
   readonly connected: boolean;
   connect(): Promise<void>;
@@ -19,7 +23,7 @@ export class BrowserCdp extends EventEmitter implements CdpConnection {
   private nextId = 0;
   private pending = new Map<number, Pending>();
   get connected(): boolean { return this.socket?.readyState === WebSocket.OPEN; }
-  constructor(private readonly discoveryUrl = "http://127.0.0.1:9222/json/version", private readonly timeoutMs = 5000) { super(); }
+  constructor(private readonly discoveryUrl = "http://127.0.0.1:9222/json/version", private readonly timeoutMs = CDP_COMMAND_TIMEOUT_MS) { super(); }
   async connect(): Promise<void> {
     if (this.connected) return;
     const discovery = new URL(this.discoveryUrl);

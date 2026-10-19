@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import http from "node:http";
 import type { Duplex } from "node:stream";
@@ -34,6 +35,7 @@ import {
   SetupVerifyRequest,
   TakeoverDoneRequest,
   TakeoverRequest,
+  TakeoverFillRequest,
   TerminalClientFrame,
   siteLabel,
 } from "@quokkabot/shared";
@@ -47,7 +49,7 @@ import { attachmentContent, attachmentHeaders, uploadAttachment } from "./attach
 import type { AuditLog } from "./audit.js";
 import type { AgentSlots } from "./agents.js";
 import { Auth, CHALLENGE_COOKIE, KILL_COOKIE, SESSION_COOKIE, type SessionInfo, VIEW_COOKIE, isFresh, killCapability, killCapabilityValid } from "./auth.js";
-import type { SupervisorClient } from "./clients.js";
+import { UpstreamError, type SupervisorClient } from "./clients.js";
 import type { AgentHandles, ComputerService } from "./computer.js";
 import type { ControlConfig } from "./config.js";
 import type { DesktopLinks } from "./desktop.js";
@@ -711,6 +713,44 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
     const agentId = await agentParam(request.params.agentId);
     const { action } = parse(TakeoverRequest, request.body);
     return computer.takeover(agentId, action);
+  });
+  const ownerFieldRoute = { ...signInRoute, onSend: async (_request: FastifyRequest, reply: FastifyReply, payload: unknown) => {
+    void reply.header("cache-control", "no-store");
+    return payload;
+  } };
+  async function ownerLease(agentId: string) {
+    const lease = await computer.lease(agentId);
+    if (lease.holder !== "owner" || (lease.expiresAt !== null && Date.parse(lease.expiresAt) <= Date.now())) {
+      throw new HttpError(409, "no_takeover", "Take over the computer first.");
+    }
+    return lease;
+  }
+  app.get<{ Params: { agentId: string } }>("/api/agents/:agentId/takeover/focus", ownerFieldRoute, async (request) => {
+    await requireSession(request);
+    const agentId = await agentParam(request.params.agentId);
+    const lease = await ownerLease(agentId);
+    try { return await handles(agentId).browser.ownerFocus(lease.generation); }
+    catch (error) {
+      if (error instanceof UpstreamError && error.status === 409) throw new HttpError(409, "no_takeover", "Take over the computer first.");
+      throw new HttpError(502, "owner_focus_failed", "Could not check the field. Try again.");
+    }
+  });
+  app.post<{ Params: { agentId: string } }>("/api/agents/:agentId/takeover/fill", ownerFieldRoute, async (request) => {
+    await requireSession(request);
+    const agentId = await agentParam(request.params.agentId);
+    const lease = await ownerLease(agentId);
+    const body = parse(TakeoverFillRequest, request.body);
+    let result;
+    try { result = await handles(agentId).browser.ownerFill({ ...body, commandId: randomUUID(), leaseGeneration: lease.generation }); }
+    catch { throw new HttpError(502, "owner_fill_failed", "Could not fill the field. Check the computer before trying again."); }
+    if (result.status !== "ok") {
+      if (result.status === "blocked" && result.message === "wrong field kind") throw new HttpError(409, "wrong_field", "Tap the password or code field on the computer first.");
+      if (result.status === "blocked" && result.message === "wrong site") throw new HttpError(409, "wrong_site", "The page changed. Check the site and try again.");
+      if (result.status === "blocked" && result.message === "no takeover") throw new HttpError(409, "no_takeover", "Take over the computer first.");
+      throw new HttpError(502, "owner_fill_failed", "Could not fill the field. Check the computer before trying again.");
+    }
+    await audit.append(agentId, "owner", "owner.filled_field", { kind: body.kind, site: new URL(result.url!).hostname });
+    return { ok: true };
   });
   app.post<{ Params: { agentId: string } }>("/api/agents/:agentId/attended", appRoute, async (request) => {
     await requireSession(request);
