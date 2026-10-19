@@ -12,7 +12,7 @@ describe("request logging", () => {
       expect(state).toBe("distinctive-state-secret");
       return { agentId: "test-agent", account: "owner@example.test", id: "test-connector" };
     };
-    const { app } = buildServer({
+    const { app } = await buildServer({
       config: { agents: [], appOrigin: "https://quokkabot.test", appHost: "quokkabot.test", viewHost: "view.test", viewOrigin: "https://view.test" },
       connectors: { callback }, tasks: { connectorConnected: async () => undefined }, log,
     } as unknown as HttpDeps);

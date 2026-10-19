@@ -108,7 +108,7 @@ declare module "fastify" {
   }
 }
 
-export function buildServer(deps: HttpDeps): { app: FastifyInstance; server: http.Server } {
+export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstance; server: http.Server }> {
   const { config, slots, db, auth, tasks, events, computer, policy, supervisor, handles, log, audit, desktopLinks, vault, connectors } = deps;
   // Fastify ignores its serializers option when loggerInstance is supplied, so enforce it on the child logger.
   const requestLog = log.child({}, { serializers: { req: serializeRequest } });
@@ -223,7 +223,8 @@ export function buildServer(deps: HttpDeps): { app: FastifyInstance; server: htt
   const appRoute = { constraints: { host: config.appHost } };
   // Requests per client address (Caddy passes it on). Every route has a ceiling; the routes that work without a
   // session (setup, sign-in, desktop link, OAuth callback) have a tight one.
-  void app.register(rateLimit, {
+  // Awaited: the plugin attaches its limits to routes as they are added, so it must be loaded before any route.
+  await app.register(rateLimit, {
     global: true,
     max: 1200,
     timeWindow: "1 minute",

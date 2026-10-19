@@ -9,7 +9,7 @@ const attachmentId = "22222222-2222-4222-8222-222222222222";
 const headers = { host: "quokkabot.test", origin: "https://quokkabot.test" };
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
 
-function fixture() {
+async function fixture() {
   const row = { id: agentId, idx: 1, generation: 2, name: "New occupant", model: "claude-opus-4-6", effort: "high", cli_signed_in: "no", cli_account: null, cli_plan: null,
     added_at: new Date() as Date | null, removing_at: null, killed_at: null };
   const write = vi.fn();
@@ -36,13 +36,13 @@ function fixture() {
     log: pino({ level: "silent" }), webRoot: "/missing",
   } as unknown as HttpDeps;
   deps.slots = new AgentSlots(deps.db, deps.config, deps.audit);
-  return { ...buildServer(deps), deps, row, write, create };
+  return { ...(await buildServer(deps)), deps, row, write, create };
 }
 
 describe("owner mutation generation fence", () => {
   for (const route of ["attachments", "tasks", "settings"] as const) {
     it.each(["1", "2", undefined])(`${route} rejects an old generation and accepts a matching or absent header: %s`, async generation => {
-      const { app, write, create, deps, row } = fixture();
+      const { app, write, create, deps, row } = await fixture();
       const originalName = row.name;
       try {
         const result = await app.inject({ method: route === "settings" ? "PUT" : "POST", url: `/api/agents/${agentId}/${route}?name=test.png`,
@@ -69,7 +69,7 @@ describe("owner mutation generation fence", () => {
   }
 
   it("never makes the kill switch wait for the agent lock, with or without a generation", async () => {
-    const { app, deps } = fixture();
+    const { app, deps } = await fixture();
     const release = await deps.slots.acquire(agentId);
     try {
       for (const extra of [{}, { "x-quokkabot-agent-generation": "2" }]) {
@@ -81,7 +81,7 @@ describe("owner mutation generation fence", () => {
   });
 
   it("treats an empty slot as replaced when the client supplied a generation", async () => {
-    const { app, row } = fixture();
+    const { app, row } = await fixture();
     row.added_at = null;
     try {
       const result = await app.inject({ method: "POST", url: `/api/agents/${agentId}/tasks`, headers: { ...headers, "x-quokkabot-agent-generation": "2" }, payload: { prompt: "Old request" } });
@@ -91,7 +91,7 @@ describe("owner mutation generation fence", () => {
   });
 
   it("checks a stale DELETE generation inside removal's own lock", async () => {
-    const { app, write, deps } = fixture();
+    const { app, write, deps } = await fixture();
     const acquire = vi.spyOn(deps.slots, "acquire");
     try {
       const result = await app.inject({ method: "DELETE", url: `/api/agents/${agentId}`, headers: { ...headers, "x-quokkabot-agent-generation": "1" } });
@@ -105,7 +105,7 @@ describe("owner mutation generation fence", () => {
 
 describe("handler lock lifetime", () => {
   it("keeps the lock after an early response until the handler's work finishes", async () => {
-    const { app, deps } = fixture();
+    const { app, deps } = await fixture();
     let finish!: () => void;
     const gate = new Promise<void>(resolve => { finish = resolve; });
     app.post("/api/agents/:agentId/early", async (_request, reply) => { void reply.send({}); await gate; });
@@ -122,7 +122,7 @@ describe("handler lock lifetime", () => {
   });
 
   it.each(["return", "throw"])("holds the lock through handler completion and releases on %s", async outcome => {
-    const { app, deps } = fixture();
+    const { app, deps } = await fixture();
     let finish!: () => void;
     const gate = new Promise<void>(resolve => { finish = resolve; });
     let started!: () => void;
@@ -146,7 +146,7 @@ describe("handler lock lifetime", () => {
 // Listening sockets are unavailable in the local sandbox. The Linux integration run exercises real disconnects.
 describe.skipIf(process.env.QB_INTEGRATION !== "1")("disconnected owner mutation", () => {
   it.each(["return", "reply", "throw"])("releases only after the disconnected handler finishes by %s", async outcome => {
-    const { app, deps } = fixture();
+    const { app, deps } = await fixture();
     let finish!: () => void;
     const gate = new Promise<void>(resolve => { finish = resolve; });
     let started!: () => void;

@@ -101,7 +101,7 @@ export async function startControl(config: ControlConfig, log: Logger, webRoot: 
   }
 
   const desktopLinks = new DesktopLinks(db, audit, config.appOrigin, agentIds);
-  const { app } = buildServer({
+  const { app } = await buildServer({
     config,
     slots,
     desktopLinks,

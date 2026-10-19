@@ -85,7 +85,7 @@ describe("owner image routes", () => {
     const query = vi.fn().mockResolvedValue({ rows: [row()] });
     const deps = httpDeps(query);
     const require = vi.spyOn(deps.slots, "require").mockRejectedValue(new HttpError(404, "unknown_agent", "No such agent."));
-    const { app } = buildServer(deps);
+    const { app } = await buildServer(deps);
     try {
       const result = await app.inject({ url: `/api/attachments/${attachmentId}/content`, headers: { host: "quokkabot.test" } });
       expect(result.statusCode).toBe(404);
@@ -101,7 +101,7 @@ describe("owner image routes", () => {
       if (sql.startsWith("select * from attachments")) return { rows: [row()] };
       throw new Error(sql);
     });
-    const deps = httpDeps(query); const { app } = buildServer(deps);
+    const deps = httpDeps(query); const { app } = await buildServer(deps);
     try {
       const uploaded = await app.inject({ method: "POST", url: `/api/agents/${agentId}/attachments?name=photo.png`, headers: { host: "quokkabot.test", origin: "https://quokkabot.test", "content-type": "image/png" }, payload: png });
       expect(uploaded.statusCode).toBe(200);
@@ -118,7 +118,7 @@ describe("owner image routes", () => {
     } finally { await app.close(); }
   });
   it("rejects oversized uploads, mismatched types, wrong origin and too-many ids with 4xx", async () => {
-    const deps = httpDeps(vi.fn()); const { app } = buildServer(deps);
+    const deps = httpDeps(vi.fn()); const { app } = await buildServer(deps);
     try {
       const headers = { host: "quokkabot.test", origin: "https://quokkabot.test", "content-type": "image/png" };
       expect((await app.inject({ method: "POST", url: `/api/agents/${agentId}/attachments?name=x.png`, headers, payload: Buffer.alloc(MAX_IMAGE_BYTES + 1) })).statusCode).toBe(413);

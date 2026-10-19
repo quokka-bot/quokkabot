@@ -26,8 +26,8 @@ describe("owner Claude sign-in routes", () => {
   let startComputer: ReturnType<typeof vi.fn>;
   let startSignIn: ReturnType<typeof vi.fn>;
   let cancel: ReturnType<typeof vi.fn>;
-  let app: ReturnType<typeof buildServer>["app"];
-  beforeEach(() => {
+  let app: Awaited<ReturnType<typeof buildServer>>["app"];
+  beforeEach(async () => {
     generation = 1; added = true;
     ownerSession = true; running = false; signedIn = false; account = null; plan = null; logs = [];
     audit = vi.fn(); submit = vi.fn().mockResolvedValue(status); startComputer = vi.fn(); cancel = vi.fn();
@@ -50,7 +50,7 @@ describe("owner Claude sign-in routes", () => {
     } as unknown as HttpDeps;
     slots = new AgentSlots(deps.db, deps.config, deps.audit);
     deps.slots = slots;
-    app = buildServer(deps).app;
+    app = (await buildServer(deps)).app;
   });
   afterEach(async () => { await app.close(); });
   const startPath = `/api/agents/${agentId}/claude-sign-in`;

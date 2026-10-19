@@ -228,13 +228,13 @@ describe("agent slots", () => {
   });
 });
 
-const servers: ReturnType<typeof buildServer>["app"][] = [];
+const servers: Awaited<ReturnType<typeof buildServer>>["app"][] = [];
 afterEach(async () => { for (const app of servers.splice(0)) await app.close(); });
 async function httpFixture() {
   const fixtureData = await fixture();
   const { slots, db, audit } = fixtureData;
   const computer = { releaseKill: vi.fn(async () => undefined), view: vi.fn(async () => ({ state: "stopped", sandboxes: [], lease: { holder: "paused", generation: 1, expiresAt: null }, attendedOpen: false, killedAt: null })) };
-  const { app } = buildServer({ config, slots, db, audit, computer, vault: { list: vi.fn() }, auth: { session: async () => ({ hash: "owner", freshUntil: new Date(Date.now() + 10000) }) },
+  const { app } = await buildServer({ config, slots, db, audit, computer, vault: { list: vi.fn() }, auth: { session: async () => ({ hash: "owner", freshUntil: new Date(Date.now() + 10000) }) },
     log: pino({ level: "silent" }), webRoot: "/missing" } as unknown as HttpDeps);
   servers.push(app);
   const headers = { host: config.appHost, origin: config.appOrigin };
