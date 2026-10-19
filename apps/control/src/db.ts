@@ -543,6 +543,25 @@ const MIGRATIONS: Migration[] = [
       alter table sessions add constraint sessions_phone_absolute_check check (client <> 'phone' or absolute_expires_at is not null);
     `,
   },
+  {
+    id: 18,
+    sql: (appUser) => `
+      -- The iPhone app's sign-ins: a passkey challenge for a phone, links that end in a phone session, operator codes.
+      alter table webauthn_challenges drop constraint webauthn_challenges_purpose_check;
+      alter table webauthn_challenges add constraint webauthn_challenges_purpose_check check (purpose in ('setup', 'signin', 'fresh', 'link', 'phone'));
+      alter table desktop_links add column client text not null default 'desktop' check (client in ('desktop', 'phone'));
+      create table pairing_codes (
+        hash text primary key,
+        uses_left int not null check (uses_left >= 0),
+        expires_at timestamptz not null,
+        revoked_at timestamptz,
+        created_at timestamptz not null default now()
+      );
+      grant select, insert, update on pairing_codes to ${appUser};
+      -- The code a phone session was made with, so revoking the codes signs those phones out.
+      alter table sessions add column pairing_code_hash text;
+    `,
+  },
 ];
 
 export async function migrate(config: ControlConfig): Promise<void> {

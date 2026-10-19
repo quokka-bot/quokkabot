@@ -2,8 +2,8 @@ import { randomInt, randomUUID } from "node:crypto";
 import type { DesktopLinkPending, DesktopLinkStartResponse } from "@quokkabot/shared";
 import { sha256Hex } from "@quokkabot/shared/node";
 import type { AuditLog } from "./audit.js";
-import { newSecret } from "./auth.js";
-import { type Db, maybeOne, one } from "./db.js";
+import { insertPhoneSession, newSecret } from "./auth.js";
+import { type Db, maybeOne, one, withTx } from "./db.js";
 import { HttpError } from "./errors.js";
 
 const LINK_MINUTES = 10;
@@ -11,7 +11,7 @@ const MAX_PENDING_LINKS = 20;
 const FRESH_MINUTES = 5;
 const SESSION_DAYS = 30;
 // No 0/O, 1/I/L: the owner compares the code by eye.
-const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+export const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 export function newUserCode(): string {
   let code = "";
@@ -23,9 +23,14 @@ function codeHash(userCode: string): string {
   return sha256Hex(`desktop-link:${userCode.toUpperCase()}`);
 }
 
+// The Mac app's links and the iPhone app's: the same approval, but a desktop link ends in a session cookie and a phone
+// link in a phone session handed to the phone's poll. Each app's poll collects only its own kind.
+export type LinkClient = "desktop" | "phone";
+
 interface LinkRow {
   id: string;
   kind: "signin" | "fresh";
+  client: LinkClient;
   device_name: string;
   requester_session_hash: string | null;
   created_at: Date;
@@ -51,8 +56,9 @@ export class DesktopLinks {
     private readonly agentIds: () => string[] | Promise<string[]>,
   ) {}
 
-  async start(kind: "signin" | "fresh", deviceName: string, requesterSessionHash: string | null): Promise<DesktopLinkStartResponse> {
+  async start(kind: "signin" | "fresh", deviceName: string, requesterSessionHash: string | null, client: LinkClient = "desktop"): Promise<DesktopLinkStartResponse> {
     if (kind === "fresh" && requesterSessionHash === null) throw new HttpError(401, "signed_out", "Sign in first.");
+    if (kind === "fresh" && client === "phone") throw new HttpError(400, "bad_request", "A phone link only signs in.");
     const pending = await one<{ n: number }>(
       this.db,
       "select count(*)::int as n from desktop_links where expires_at > now() and approved_at is null and refused_at is null",
@@ -62,9 +68,9 @@ export class DesktopLinks {
     const pollToken = newSecret();
     const row = await one<{ expires_at: Date }>(
       this.db,
-      `insert into desktop_links (id, kind, code_hash, poll_hash, device_name, requester_session_hash, expires_at)
-       values ($1, $2, $3, $4, $5, $6, now() + $7::interval) returning expires_at`,
-      [randomUUID(), kind, codeHash(userCode), sha256Hex(pollToken), deviceName, requesterSessionHash, `${LINK_MINUTES} minutes`],
+      `insert into desktop_links (id, kind, client, code_hash, poll_hash, device_name, requester_session_hash, expires_at)
+       values ($1, $2, $3, $4, $5, $6, $7, now() + $8::interval) returning expires_at`,
+      [randomUUID(), kind, client, codeHash(userCode), sha256Hex(pollToken), deviceName, requesterSessionHash, `${LINK_MINUTES} minutes`],
     );
     return { userCode, pollToken, verifyUrl: `${this.appOrigin}/link#${userCode}`, expiresAt: row.expires_at.toISOString() };
   }
@@ -81,7 +87,7 @@ export class DesktopLinks {
 
   async pending(userCode: string): Promise<DesktopLinkPending> {
     const row = await this.open(userCode);
-    return { kind: row.kind, deviceName: row.device_name, createdAt: row.created_at.toISOString(), expiresAt: row.expires_at.toISOString() };
+    return { kind: row.kind, client: row.client, deviceName: row.device_name, createdAt: row.created_at.toISOString(), expiresAt: row.expires_at.toISOString() };
   }
 
   // The link's id, for binding a passkey assertion to it.
@@ -93,7 +99,8 @@ export class DesktopLinks {
   async approve(userCode: string, linkId: string): Promise<void> {
     const row = await this.open(userCode);
     if (row.id !== linkId) throw new HttpError(403, "link_mismatch", "Start again.");
-    const approved = await this.db.query("update desktop_links set approved_at = now() where id = $1 and approved_at is null", [row.id]);
+    // Approval and refusal each need the link undecided, so a link is never both.
+    const approved = await this.db.query("update desktop_links set approved_at = now() where id = $1 and approved_at is null and refused_at is null", [row.id]);
     if (approved.rowCount !== 1) throw new HttpError(409, "already_decided", "This code was already decided.");
     if (row.kind === "fresh" && row.requester_session_hash) {
       // The re-check marks only the desktop session that asked for it.
@@ -112,24 +119,33 @@ export class DesktopLinks {
 
   async refuse(userCode: string): Promise<void> {
     const row = await this.open(userCode);
-    await this.db.query("update desktop_links set refused_at = now() where id = $1", [row.id]);
+    const refused = await this.db.query("update desktop_links set refused_at = now() where id = $1 and approved_at is null and refused_at is null", [row.id]);
+    if (refused.rowCount !== 1) throw new HttpError(409, "already_decided", "This code was already decided.");
   }
 
-  async poll(pollToken: string): Promise<PollOutcome> {
-    const row = await maybeOne<LinkRow>(this.db, "select * from desktop_links where poll_hash = $1", [sha256Hex(pollToken)]);
-    if (!row || row.consumed_at) return { state: "expired" };
-    if (row.refused_at) return { state: "refused" };
-    if (!row.approved_at) return row.expires_at.getTime() > Date.now() ? { state: "pending" } : { state: "expired" };
-    // An approval is collected within the link's lifetime or never: an abandoned approved link cannot mint a session later.
-    const consumed = await this.db.query("update desktop_links set consumed_at = now() where id = $1 and consumed_at is null and expires_at > now()", [row.id]);
-    if (consumed.rowCount !== 1) return { state: "expired" };
-    if (row.kind === "fresh") return { state: "approved", kind: "fresh" };
-    // The session is created now, at the moment the app collects it; no session secret is ever stored.
-    const sessionToken = newSecret();
-    await this.db.query(
-      "insert into sessions (hash, expires_at, fresh_until, device_name, client) values ($1, now() + $2::interval, now() + $3::interval, $4, 'desktop')",
-      [sha256Hex(sessionToken), `${SESSION_DAYS} days`, `${FRESH_MINUTES} minutes`, row.device_name],
-    );
-    return { state: "approved", kind: "signin", sessionToken };
+  // Collecting an approval, consuming the link and creating its session happen in one transaction, on the locked row:
+  // a refusal cannot slip in between, and a failed insert leaves the link to be collected again.
+  async poll(pollToken: string, client: LinkClient): Promise<PollOutcome> {
+    return withTx(this.db, async (tx) => {
+      const row = await maybeOne<LinkRow>(tx, "select * from desktop_links where poll_hash = $1 for update", [sha256Hex(pollToken)]);
+      if (!row || row.client !== client || row.consumed_at) return { state: "expired" };
+      if (row.refused_at) return { state: "refused" };
+      if (!row.approved_at) return row.expires_at.getTime() > Date.now() ? { state: "pending" } : { state: "expired" };
+      // An approval is collected within the link's lifetime or never: an abandoned approved link cannot mint a session later.
+      const consumed = await tx.query(
+        "update desktop_links set consumed_at = now() where id = $1 and consumed_at is null and refused_at is null and approved_at is not null and expires_at > now()",
+        [row.id],
+      );
+      if (consumed.rowCount !== 1) return { state: "expired" };
+      if (row.kind === "fresh") return { state: "approved", kind: "fresh" };
+      // The session is created now, at the moment the app collects it; no session secret is ever stored.
+      if (client === "phone") return { state: "approved", kind: "signin", sessionToken: await insertPhoneSession(tx, row.device_name) };
+      const sessionToken = newSecret();
+      await tx.query(
+        "insert into sessions (hash, expires_at, fresh_until, device_name, client) values ($1, now() + $2::interval, now() + $3::interval, $4, 'desktop')",
+        [sha256Hex(sessionToken), `${SESSION_DAYS} days`, `${FRESH_MINUTES} minutes`, row.device_name],
+      );
+      return { state: "approved", kind: "signin", sessionToken };
+    });
   }
 }

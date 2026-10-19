@@ -93,7 +93,7 @@ beforeEach(() => {
       logins = [updated]; return json(updated);
     }
     if (path === `/api/logins/${loginId}` && init?.method === "DELETE") { logins = []; return json({}); }
-    if (path === `/api/desktop-link/pending?code=${code}`) return json({ kind: "signin", deviceName: "Office Mac", createdAt: at, expiresAt: flow.expiresAt });
+    if (path === `/api/desktop-link/pending?code=${code}`) return json({ kind: "signin", client: "desktop", deviceName: "Office Mac", createdAt: at, expiresAt: flow.expiresAt });
     if (path === "/api/desktop-link/approve/options" || path === "/api/auth/options") return json({ challenge: "link-bound-challenge", userVerification: "required" });
     if (path === "/api/desktop-link/approve/verify" || path === "/api/desktop-link/refuse") return json({});
     throw new Error(`Unexpected ${init?.method} ${path}`);
@@ -196,7 +196,7 @@ describe("browser desktop-link page", () => {
 
   it("refuses a fresh check without requesting a passkey assertion", async () => {
     window.history.replaceState({}, "", `/link#${code}`);
-    handler = path => path.includes("/desktop-link/pending?") ? json({ kind: "fresh", deviceName: "Office Mac", createdAt: at, expiresAt: flow.expiresAt }) : undefined;
+    handler = path => path.includes("/desktop-link/pending?") ? json({ kind: "fresh", client: "desktop", deviceName: "Office Mac", createdAt: at, expiresAt: flow.expiresAt }) : undefined;
     mount("/link"); await screen.findByText(/wants to confirm an action/);
     fireEvent.click(screen.getByRole("button", { name: "Refuse" }));
     await screen.findByText("Refused.");
@@ -228,6 +228,17 @@ describe("browser desktop-link page", () => {
     expect(screen.queryByText("Approved. Return to the desktop app.")).toBeNull();
   });
 
+  it("names the iPhone app when a phone asks", async () => {
+    window.history.replaceState({}, "", `/link#${code}`);
+    handler = path => path.includes("/desktop-link/pending?") ? json({ kind: "signin", client: "phone", deviceName: "Owner's iPhone", createdAt: at, expiresAt: flow.expiresAt }) : undefined;
+    vi.mocked(startAuthentication).mockResolvedValue({ id: "passkey-assertion" } as Awaited<ReturnType<typeof startAuthentication>>);
+    mount("/link"); await screen.findByText("Owner's iPhone");
+    expect(screen.getByRole("heading", { name: "Connect the iPhone app" })).toBeTruthy();
+    expect(screen.getByText("Only approve if the iPhone app shows the same code")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await screen.findByText("Approved. Return to the iPhone app.");
+  });
+
   it("rejects missing or malformed codes before making a request", async () => {
     window.history.replaceState({}, "", "/link#bad-code"); mount("/link");
     expect(screen.getByRole("alert").textContent).toContain("missing or invalid");
@@ -243,6 +254,19 @@ describe("settings and native navigation", () => {
     await waitFor(() => expect(screen.queryByText("Other Mac")).toBeNull());
     expect(fetchMock.mock.calls.some(([path, init]) => path === "/api/sessions/other" && init?.method === "DELETE")).toBe(true);
     expect(screen.queryByText("Desktop app")).toBeNull();
+  });
+
+  it("shows this server's address as a QR code and opens the approval for a phone's code", async () => {
+    mount("/settings");
+    const qr = await screen.findByRole("img", { name: `QR code for ${window.location.origin}` });
+    expect(qr.querySelectorAll("rect").length).toBeGreaterThan(50);
+    const approve = screen.getByRole("button", { name: "Approve the phone" });
+    change("Code shown on the phone", "abcd-efg");
+    expect((approve as HTMLButtonElement).disabled).toBe(true);
+    change("Code shown on the phone", code.toLowerCase());
+    fireEvent.click(approve);
+    await screen.findByText("Office Mac");
+    expect(screen.getByText(code)).toBeTruthy();
   });
 
   it("routes to sign-in after revoking the current device", async () => {

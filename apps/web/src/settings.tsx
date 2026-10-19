@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { Effort, type AgentSummary, type SessionView } from "@quokkabot/shared";
+import { DesktopLinkDecideRequest, Effort, type AgentSummary, type SessionView } from "@quokkabot/shared";
+import { encode } from "uqr";
 import { api } from "./api.js";
 import { RemoveAgent } from "./agent-dialog.js";
+import { LINK_CODE_KEY } from "./link.js";
 import { dateLabel, ErrorLine, useAction, usePollInterval } from "./ui.js";
 
 const CLIENT_LABELS: Record<SessionView["client"], string> = { browser: "Web app", desktop: "Mac app", phone: "iPhone app" };
@@ -61,8 +63,36 @@ export function DesktopSettings() {
   </section>;
 }
 
+// The iPhone app signs in with a link the owner approves here: it scans this server's address from the QR code (or
+// the owner types it), then shows a code. The QR code holds only the address, so showing it grants nothing.
+export function ConnectPhone() {
+  const navigate = useNavigate();
+  const [code, setCode] = useState("");
+  const link = `quokkabot://connect?server=${encodeURIComponent(window.location.origin)}`;
+  const qr = encode(link, { border: 2 });
+  const userCode = code.trim().toUpperCase();
+  const valid = DesktopLinkDecideRequest.safeParse({ userCode }).success;
+  return <section className="card" aria-label="Connect a phone">
+    <h2>Connect a phone</h2>
+    <p>In the Quokka Bot iPhone app, tap Connect to your server and scan this code, or type {window.location.origin}.</p>
+    <svg className="phone-qr" viewBox={`0 0 ${qr.size} ${qr.size}`} role="img" aria-label={`QR code for ${window.location.origin}`} shapeRendering="crispEdges">
+      <rect width={qr.size} height={qr.size} fill="#fff" />
+      {qr.data.flatMap((row, y) => row.map((dark, x) => dark ? <rect key={`${x}.${y}`} x={x} y={y} width={1} height={1} fill="#000" /> : null))}
+    </svg>
+    <form className="actions wrap" onSubmit={event => {
+      event.preventDefault();
+      if (!valid) return;
+      sessionStorage.setItem(LINK_CODE_KEY, userCode);
+      void navigate("/link");
+    }}>
+      <label>Code shown on the phone <input value={code} onChange={event => setCode(event.target.value)} placeholder="ABCD-EFGH" autoComplete="off" spellCheck={false} /></label>
+      <button type="submit" disabled={!valid}>Approve the phone</button>
+    </form>
+  </section>;
+}
+
 export function OwnerSettings() {
-  return <><Devices />{window.quokkabotDesktop && <DesktopSettings />}</>;
+  return <><Devices /><ConnectPhone />{window.quokkabotDesktop && <DesktopSettings />}</>;
 }
 
 export function Settings({ agent }: { agent: AgentSummary }) {

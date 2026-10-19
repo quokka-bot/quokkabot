@@ -17,6 +17,9 @@ export const ControlConfigFile = z
     ownerName: z.string().min(1).max(80),
     // Optional contact address shown on the public About and Privacy pages.
     publicContact: z.email().optional(),
+    // iPhone app builds allowed to use native passkeys on this domain ("<team id>.<bundle id>"), served in
+    // /.well-known/apple-app-site-association. Only a build that names this domain in its entitlements can use it.
+    appleAppIds: z.array(z.string().regex(/^[A-Z0-9]{10}\.[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/)).max(10).default([]),
     dataRoot: z.string().startsWith("/"),
     secretsDir: z.string().startsWith("/"),
     listen: z.string().regex(/^[0-9.]+:[0-9]{1,5}$/).default("0.0.0.0:8080"),

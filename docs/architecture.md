@@ -69,7 +69,8 @@ executes it. There is no eval, cookie, storage, raw DevTools, upload or clipboar
   Origin. The iPhone app keeps its token in the Keychain and sends it in an Authorization header, which a web page
   cannot send to this origin; with that header every cookie is ignored. Each session works only the way it travels. A
   phone session stays signed in for 30 days after its last use and ends after 180 days at the latest; it never counts
-  as a fresh passkey check. Signing a device out closes its streams and live views; a viewer socket also closes when
+  as a fresh passkey check. A phone signs in with a passkey (only on domains built into the app), a link the owner
+  approves with a passkey in a browser, or a code the server's operator prints; each code works a set number of times. Signing a device out closes its streams and live views; a viewer socket also closes when
   its 12-hour viewer cookie runs out.
 - **Live view.** Selkies runs in secure mode; control holds its master token. The owner watches on a separate viewer
   origin. The agent holds the input lock by default; "Take over" moves it to the owner on the server, and an expired or

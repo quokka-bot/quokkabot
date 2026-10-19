@@ -22,7 +22,7 @@ async function main(): Promise<void> {
     await diagnostic(config, log, process.argv.slice(3));
     return;
   }
-  const { db, auth, audit } = await context(config);
+  const { db, auth, audit, pairingCodes, agentIds } = await context(config);
   try {
     if (command === "setup-link") {
       process.stdout.write(`${await auth.createSetupLink()}\n`);
@@ -38,8 +38,21 @@ async function main(): Promise<void> {
     } else if (command === "revoke-sessions") {
       await auth.revokeAllSessions();
       process.stdout.write("All owner sessions revoked. Create a setup link to sign in on a new device.\n");
+    } else if (command === "pairing-code") {
+      // pairing-code [--uses N] [--days D]: a code that signs the iPhone app in (Connect, "I have a code").
+      const option = (name: string, fallback: number): number => {
+        const at = process.argv.indexOf(name);
+        return at === -1 ? fallback : Number(process.argv[at + 1]);
+      };
+      const { code, expiresAt } = await pairingCodes.create(option("--uses", 1), option("--days", 1));
+      process.stdout.write(`${code}\n`);
+      process.stdout.write(`In the iPhone app: Connect to your server, ${config.appOrigin}, then "I have a code". Valid until ${expiresAt}.\n`);
+    } else if (command === "revoke-pairing-codes") {
+      const { codes, sessions } = await auth.revokePairingCodes();
+      for (const agentId of await agentIds()) await audit.append(agentId, "system", "owner.pairing_codes_revoked", { codes, sessions });
+      process.stdout.write(`Revoked ${codes} pairing codes and signed out ${sessions} phones that used one.\n`);
     } else {
-      process.stderr.write(`Unknown command ${command}. Commands: serve, setup-link, audit-verify, revoke-sessions, diagnostic\n`);
+      process.stderr.write(`Unknown command ${command}. Commands: serve, setup-link, pairing-code, revoke-pairing-codes, audit-verify, revoke-sessions, diagnostic\n`);
       process.exitCode = 2;
     }
   } finally {

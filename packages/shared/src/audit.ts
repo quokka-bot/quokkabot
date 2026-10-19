@@ -6,6 +6,8 @@ export type AuditActor = z.infer<typeof AuditActor>;
 
 export const AuditType = z.enum([
   "owner.setup_link_created",
+  "owner.pairing_code_created",
+  "owner.pairing_codes_revoked",
   "owner.passkey_registered",
   "owner.signed_in",
   "owner.signed_out",
