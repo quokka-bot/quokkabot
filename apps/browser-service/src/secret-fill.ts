@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { hostMatchesPattern } from "@quokkabot/shared";
-import type { SecretFillRequest } from "@quokkabot/shared";
+import type { OwnerFillRequest, SecretFillRequest } from "@quokkabot/shared";
 
 export class SecretFillError extends Error {
   constructor(readonly status: "blocked" | "invalid" | "failed", message: string) { super(message); }
@@ -51,7 +51,7 @@ const FOCUSED_FIELD_SOURCE = `function focusedField() {
 
 // Which fields may receive which value. One source, used in the service and inside the page.
 // A code goes only into a field that says it takes one: a TOTP typed into a search box would land in a URL.
-const FIELD_RULE_SOURCE = `function fieldMatches(field, kind) {
+const FIELD_RULE_SOURCE = `function fieldMatches(field, kind, owner = false) {
   if (field.tag !== "input" || field.disabled || field.readOnly) return false;
   if (kind === "password") return field.type === "password";
   if (kind === "username") return field.type === "text" || field.type === "email" || field.type === "tel";
@@ -59,8 +59,9 @@ const FIELD_RULE_SOURCE = `function fieldMatches(field, kind) {
   if (field.autocomplete.toLowerCase().split(/\\s+/).includes("one-time-code")) return true;
   if (field.type !== "text" && field.type !== "number" && field.type !== "tel") return false;
   if (field.inputMode.toLowerCase() === "numeric") return true;
-  if (field.maxLength >= 4 && field.maxLength <= 10) return true;
-  return /(^|[^a-z])(code|otp|totp|2fa|mfa|token|verification|verify|authenticator|pin)([^a-z]|$)/.test(field.hints);
+  if (!owner && field.maxLength >= 4 && field.maxLength <= 10) return true;
+  if (!owner && /(^|[^a-z])token([^a-z]|$)/.test(field.hints)) return true;
+  return /(^|[^a-z])(code|otp|totp|2fa|mfa|verification|verify|authenticator|pin)([^a-z]|$)/.test(field.hints);
 }`;
 
 // This fixed expression runs only in a service-created isolated world.
@@ -69,23 +70,28 @@ export const FOCUSED_FIELD_EXPRESSION = `(() => { ${FOCUSED_FIELD_SOURCE}; const
 // Checks the site, the focused element and its kind, and inserts the value, in one task of the page: no page script
 // can move focus or change the field between the check and the insertion. Runs in the isolated world of the frame
 // that was inspected; if that frame navigated, its context is gone and the call fails without typing.
-export const INSERT_FUNCTION = `function (kind, expectedOrigin, value) {
+export const INSERT_FUNCTION = `function (kind, expectedOrigin, value, owner = false, allowLocalhostHttp = false) {
   ${FOCUSED_FIELD_SOURCE}
   ${FIELD_RULE_SOURCE}
   if (location.origin !== expectedOrigin) return "wrong site";
+  if (owner) {
+    const origin = new URL(location.origin);
+    const localTestHost = origin.hostname === "localhost" || origin.hostname.endsWith(".localhost");
+    if (origin.protocol !== "https:" && !(allowLocalhostHttp && origin.protocol === "http:" && localTestHost)) return "wrong site";
+  }
   const found = focusedField();
-  if (!found || !fieldMatches(found.field, kind)) return "wrong field kind";
+  if (!found || !fieldMatches(found.field, kind, owner)) return "wrong field kind";
   const element = found.element;
   element.select();
   if (!document.execCommand("insertText", false, value)) return "not inserted";
   return element.value === value ? "ok" : "not inserted";
 }`;
 
-const fieldMatchesInService = new Function(`${FIELD_RULE_SOURCE}; return fieldMatches;`)() as (field: Field, kind: SecretFillRequest["kind"]) => boolean;
+const fieldMatchesInService = new Function(`${FIELD_RULE_SOURCE}; return fieldMatches;`)() as (field: Field, kind: SecretFillRequest["kind"], owner?: boolean) => boolean;
 
 interface FocusedTarget { origin: string; frameSend: SecretFillSend; contextId: number }
 
-async function checkFocusedField(send: SecretFillSend, forFrame: FrameSend, request: SecretFillRequest, allowLocalhostHttp: boolean): Promise<FocusedTarget> {
+export async function focusedFields(send: SecretFillSend, forFrame: FrameSend): Promise<(FocusedTarget & { field: Field })[]> {
   const { frameTree } = z.object({ frameTree: FrameTreeSchema }).parse(await send("Page.getFrameTree"));
   const focused: { origin: string; field: Field; frameSend: SecretFillSend; contextId: number }[] = [];
   async function inspect(tree: FrameTree): Promise<void> {
@@ -108,16 +114,25 @@ async function checkFocusedField(send: SecretFillSend, forFrame: FrameSend, requ
     for (const child of tree.childFrames ?? []) await inspect(child);
   }
   await inspect(frameTree);
-  if (focused.length !== 1) throw new SecretFillError("blocked", "wrong field kind");
-  const selected = focused[0]!;
+  return focused;
+}
+
+function secureOrigin(value: string, allowLocalhostHttp: boolean): URL {
   let origin: URL;
-  try { origin = new URL(selected.origin); }
+  try { origin = new URL(value); }
   catch { throw new SecretFillError("blocked", "wrong site"); }
-  // Production requires TLS. Local fixture hosts may use HTTP, but still need an explicit allowed pattern.
   const localTestHost = origin.hostname === "localhost" || origin.hostname.endsWith(".localhost");
   if (origin.protocol !== "https:" && !(allowLocalhostHttp && origin.protocol === "http:" && localTestHost)) {
     throw new SecretFillError("blocked", `wrong site: ${origin.origin} is not HTTPS`);
   }
+  return origin;
+}
+
+async function checkFocusedField(send: SecretFillSend, forFrame: FrameSend, request: SecretFillRequest, allowLocalhostHttp: boolean): Promise<FocusedTarget> {
+  const focused = await focusedFields(send, forFrame);
+  if (focused.length !== 1) throw new SecretFillError("blocked", "wrong field kind");
+  const selected = focused[0]!;
+  const origin = secureOrigin(selected.origin, allowLocalhostHttp);
   if (!request.allowedPatterns.some((pattern) => hostMatchesPattern(origin.hostname, pattern))) {
     throw new SecretFillError("blocked", `wrong site: the field is on ${origin.hostname}`);
   }
@@ -127,11 +142,34 @@ async function checkFocusedField(send: SecretFillSend, forFrame: FrameSend, requ
 
 export async function fillSecret(send: SecretFillSend, forFrame: FrameSend, request: SecretFillRequest, allowLocalhostHttp = false): Promise<void> {
   const target = await checkFocusedField(send, forFrame, request, allowLocalhostHttp);
+  await insert(target, send, request, false, allowLocalhostHttp);
+}
+
+// Count all focused elements, including unsuitable fields, before selecting one across Chrome's page targets.
+export function ownerTarget<T extends FocusedTarget & { field: Field }>(focused: T[], allowLocalhostHttp: boolean): T & { kind: OwnerFillRequest["kind"] } {
+  if (focused.length !== 1) throw new SecretFillError("blocked", "wrong field kind");
+  const selected = focused[0]!;
+  let origin: URL;
+  try { origin = secureOrigin(selected.origin, allowLocalhostHttp); }
+  catch { throw new SecretFillError("blocked", "wrong site"); }
+  const kind = fieldMatchesInService(selected.field, "password", true) ? "password"
+    : fieldMatchesInService(selected.field, "code", true) ? "code" : null;
+  if (kind === null) throw new SecretFillError("blocked", "wrong field kind");
+  return { ...selected, origin: origin.origin, kind };
+}
+
+export async function fillOwner(target: FocusedTarget & { kind: OwnerFillRequest["kind"] }, send: SecretFillSend, request: OwnerFillRequest, allowLocalhostHttp: boolean): Promise<void> {
+  if (target.origin !== request.expectedOrigin) throw new SecretFillError("blocked", "wrong site");
+  if (target.kind !== request.kind) throw new SecretFillError("blocked", "wrong field kind");
+  await insert(target, send, request, true, allowLocalhostHttp);
+}
+
+async function insert(target: FocusedTarget, send: SecretFillSend, request: Pick<SecretFillRequest, "kind" | "value" | "submit">, owner: boolean, allowLocalhostHttp: boolean): Promise<void> {
   const inserted = z.object({ result: z.object({ value: z.string() }), exceptionDetails: z.unknown().optional() }).parse(
     await target.frameSend("Runtime.callFunctionOn", {
       functionDeclaration: INSERT_FUNCTION,
       executionContextId: target.contextId,
-      arguments: [{ value: request.kind }, { value: target.origin }, { value: request.value }],
+      arguments: [{ value: request.kind }, { value: target.origin }, { value: request.value }, ...(owner ? [{ value: true }, { value: allowLocalhostHttp }] : [])],
       returnByValue: true,
       silent: true,
     }),

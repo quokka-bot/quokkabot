@@ -9,16 +9,16 @@ import { pipeline } from "node:stream/promises";
 import { z } from "zod";
 import {
   BrowserCommandRequest, BrowserCommandResult, ControlLease, DownloadId, ElementRef, IsoTime, LIMITS,
-  MUTATING_BROWSER_OPS, SecretFillRequest, SiteDataClearRequest, TabRef,
+  MUTATING_BROWSER_OPS, OwnerFillRequest, SecretFillRequest, SiteDataClearRequest, TabRef,
 } from "@quokkabot/shared";
-import type { BrowserOp, TabInfo } from "@quokkabot/shared";
+import type { BrowserOp, OwnerFocusResult, TabInfo } from "@quokkabot/shared";
 import type { CdpConnection } from "./cdp.js";
 import { DownloadError, Downloads } from "./downloads.js";
 import { AGENT_BROWSER_ARGV, CHROME_PROFILE_DIR, chromeArgv, UncertainProcessError } from "./runtime.js";
 import type { Clock, ManagedProcess, ProcessRunner } from "./runtime.js";
 import { maskSnapshot } from "./snapshot.js";
 import { clearSiteData, SiteDataClearError } from "./site-data.js";
-import { fillSecret, SecretFillError } from "./secret-fill.js";
+import { fillOwner, fillSecret, focusedFields, ownerTarget, SecretFillError } from "./secret-fill.js";
 import type { SecretFillSend } from "./secret-fill.js";
 
 export interface BrowserServiceDependencies {
@@ -49,14 +49,14 @@ interface Tab {
   active: boolean;
   generation: number;
   documentEpoch: number;
-  // Counts top-level document loads only. A saved login typed into the page blocks screenshots of that document.
+  // Counts top-level document loads only. A private value typed into the page blocks screenshots of that document.
   mainEpoch: number;
   secretEpoch?: number;
   sessionId?: string;
   frameSessions: Map<string, string>;
   snapshot?: { text: string; refs: Set<string>; passwords: Set<string>; interactiveOnly: boolean };
 }
-type CommandIdentity = Pick<BrowserCommandRequest, "commandId" | "runId" | "generation">;
+type CommandIdentity = Pick<BrowserCommandRequest, "commandId" | "generation"> & Partial<Pick<BrowserCommandRequest, "runId">>;
 interface Running { request: CommandIdentity; secret: boolean; done: Promise<void>; abort: AbortController; tainted: boolean; dispatched: boolean }
 class OperationError extends Error {
   constructor(readonly status: BrowserCommandResult["status"], message: string) { super(message); }
@@ -160,7 +160,8 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
         const tab = sessionTab(detached.data.sessionId);
         if (tab) {
           delete tab.snapshot; tab.documentEpoch += 1;
-          if (tab.sessionId === detached.data.sessionId) { delete tab.sessionId; tab.mainEpoch += 1; }
+          // Losing an inspector session is not proof that the document holding a private value was replaced.
+          if (tab.sessionId === detached.data.sessionId) delete tab.sessionId;
           for (const [frame, session] of tab.frameSessions) if (session === detached.data.sessionId) tab.frameSessions.delete(frame);
         }
       }
@@ -168,7 +169,8 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
     }
     if (!method.startsWith("Browser.download")) return;
     // Capture the association synchronously, before command completion can clear it.
-    const association = lease.holder === "agent" ? running?.request : undefined;
+    const request = running?.request;
+    const association = lease.holder === "agent" && request?.runId !== undefined ? { commandId: request.commandId, runId: request.runId } : undefined;
     void downloads.event(method, params, association).catch(() => { fault = new Error("Download event processing failed"); ready = false; });
   });
   async function identity(): Promise<string | undefined> {
@@ -406,6 +408,111 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
     }
     return {};
   }
+  function ownerRefusal(generation: number): string | undefined {
+    if (leaseChanging > 0 || lease.holder !== "owner" || generation !== lease.generation ||
+        (lease.expiresAt !== null && Date.parse(lease.expiresAt) <= deps.clock.now().getTime())) return "no takeover";
+    return undefined;
+  }
+  async function ownerPages(generation: number, secret: boolean) {
+    const context = running;
+    const guardLease = (): void => {
+      if (ownerRefusal(generation) || (secret && (!context || running !== context || context.tainted || context.abort.signal.aborted))) {
+        throw new OperationError(secret ? "outcome_unknown" : "blocked", "no takeover");
+      }
+    };
+    guardLease();
+    const targets = z.object({ targetInfos: z.array(z.object({ targetId: z.string(), type: z.string(), url: z.string(), title: z.string().optional() })) })
+      .parse(await commandCdp("Target.getTargets"));
+    const remoteFrames = new Set(targets.targetInfos.filter((target) => target.type === "iframe").map((target) => target.targetId));
+    const pages = [];
+    for (const target of targets.targetInfos.filter((target) => target.type === "page")) {
+      guardLease();
+      let ref = targetRefs.get(target.targetId);
+      if (ref === undefined) { ref = TabRef.parse(`t${++nextTab}`); targetRefs.set(target.targetId, ref); }
+      let tab = tabs.get(ref);
+      if (!tab) {
+        tab = { ref, agentId: ref, targetId: target.targetId, url: target.url, title: target.title ?? "", active: false,
+          generation: 0, documentEpoch: 0, mainEpoch: 0, frameSessions: new Map() };
+        tabs.set(ref, tab);
+      }
+      const page = tab;
+      const documentEpoch = page.documentEpoch;
+      const session = await ensureSession(page);
+      const send = async (method: string, params: Record<string, unknown> = {}, frameSession = session): Promise<unknown> => {
+        const guard = (): void => {
+          guardLease();
+          if (!(method === "Input.dispatchKeyEvent" && params.type === "keyUp") && page.documentEpoch !== documentEpoch) {
+            throw new OperationError("blocked", "wrong site");
+          }
+        };
+        guard();
+        if (method.startsWith("Input.") || method === "Runtime.callFunctionOn") {
+          if (await identity() !== daemonIdentity) throw new OperationError("outcome_unknown", "browser changed during owner fill");
+          guard();
+          // Mark before dispatch, including a lost reply. Enter's next document must not inherit the block.
+          if (method === "Runtime.callFunctionOn") page.secretEpoch = page.mainEpoch;
+          context!.dispatched = true;
+        }
+        return commandCdp(method, params, frameSession);
+      };
+      const forFrame = async (frameId: string): Promise<SecretFillSend> => {
+        guardLease();
+        if (!remoteFrames.has(frameId)) return send;
+        let frameSession = page.frameSessions.get(frameId);
+        if (frameSession === undefined) {
+          const attached = z.object({ sessionId: z.string().min(1) }).parse(await commandCdp("Target.attachToTarget", { targetId: frameId, flatten: true }));
+          frameSession = attached.sessionId;
+          page.frameSessions.set(frameId, frameSession);
+          try { await commandCdp("Page.enable", {}, frameSession); }
+          catch (error) { page.frameSessions.delete(frameId); throw error; }
+        }
+        const session = frameSession;
+        return (method, params) => send(method, params, session);
+      };
+      pages.push({ send, forFrame });
+    }
+    guardLease();
+    return pages;
+  }
+  async function inspectOwner(generation: number, secret: boolean) {
+    const pages = await ownerPages(generation, secret);
+    const focused = [];
+    for (const page of pages) {
+      for (const field of await focusedFields(page.send, page.forFrame)) focused.push({ ...field, send: page.send });
+    }
+    const target = ownerTarget(focused, deps.env.NODE_ENV === "test");
+    return { target, send: target.send };
+  }
+  function ownerFocus(generation: number): Promise<OwnerFocusResult> {
+    const inspect = queue.then(async (): Promise<OwnerFocusResult> => {
+      if (ownerRefusal(generation)) throw new OperationError("blocked", "no takeover");
+      if (stopping || !await refreshReadiness()) throw new OperationError("failed", "browser not ready");
+      if (ownerRefusal(generation)) throw new OperationError("blocked", "no takeover");
+      try {
+        const { target } = await inspectOwner(generation, false);
+        if (ownerRefusal(generation)) throw new OperationError("blocked", "no takeover");
+        return { field: { origin: target.origin, kind: target.kind } };
+      } catch (error) {
+        if (ownerRefusal(generation)) throw new OperationError("blocked", "no takeover");
+        if (error instanceof SecretFillError && error.status === "blocked") return { field: null };
+        throw new OperationError("failed", "owner focus failed");
+      }
+    });
+    queue = inspect.then(() => undefined, () => undefined);
+    return inspect;
+  }
+  function ownerFill(input: unknown): Promise<BrowserCommandResult> {
+    const parsed = OwnerFillRequest.safeParse(input);
+    if (!parsed.success) return Promise.resolve({ commandId: "invalid", status: "invalid", message: "invalid owner fill request" });
+    const request = parsed.data;
+    if (ownerRefusal(request.leaseGeneration)) return Promise.resolve({ commandId: request.commandId, status: "blocked", message: "no takeover" });
+    return enqueue({ ...request, generation: request.leaseGeneration }, "owner", true, async () => {
+      const { target, send } = await inspectOwner(request.leaseGeneration, true);
+      await fillOwner(target, send, request, deps.env.NODE_ENV === "test");
+      if (ownerRefusal(request.leaseGeneration)) throw new OperationError("outcome_unknown", "no takeover");
+      return {};
+    });
+  }
   async function executeOp(request: BrowserCommandRequest): Promise<Partial<BrowserCommandResult>> {
     const op = request.op;
     assertInput(op);
@@ -455,7 +562,7 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
     if (op.op === "screenshot") {
       // The page may show what was typed (a code field, a "show password" toggle). Snapshots mask fields; images cannot.
       if (tab.secretEpoch === tab.mainEpoch) {
-        throw new OperationError("blocked", "screenshots are off on this page because a saved login was typed into it; use browser_snapshot, or load another page first");
+        throw new OperationError("blocked", "screenshots are off on this page because a private value was typed into it; use browser_snapshot, or load another page first");
       }
       const path = join(deps.roots.scratch, `screenshot-${request.commandId}.png`);
       try {
@@ -553,25 +660,25 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
     const request = parsed.data;
     return enqueue(request, "secret", true, () => executeSecretFill(request));
   }
-  function enqueue(request: CommandIdentity, kind: "command" | "secret", mutating: boolean,
+  function enqueue(request: CommandIdentity, kind: "command" | "secret" | "owner", mutating: boolean,
     work: () => Promise<Partial<BrowserCommandResult>>): Promise<BrowserCommandResult> {
     const fingerprint = createHmac("sha256", fingerprintKey).update(kind).update(JSON.stringify(request)).digest("hex");
     // Only this metadata is attached to the running context or retained by the result-cache continuation.
-    const identity: CommandIdentity = { commandId: request.commandId, runId: request.runId, generation: request.generation };
+    const identity: CommandIdentity = { commandId: request.commandId, ...(request.runId === undefined ? {} : { runId: request.runId }), generation: request.generation };
     const previous = results.get(identity.commandId) ?? pending.get(identity.commandId);
     if (previous) {
       if (previous.fingerprint !== fingerprint) return Promise.resolve({ commandId: identity.commandId, status: "invalid", message: "command id already used" });
       return "result" in previous ? Promise.resolve(previous.result) : previous.promise;
     }
     const command = queue.then(async (): Promise<BrowserCommandResult> => {
-      const blocked = refusal(identity);
+      const blocked = kind === "owner" ? ownerRefusal(identity.generation) : refusal(identity);
       if (blocked) return { commandId: identity.commandId, status: "blocked", message: blocked };
       if (stopping || !await refreshReadiness()) return { commandId: identity.commandId, status: "failed", message: "browser not ready" };
       // Readiness includes I/O. A lease update during that await must fence this command too.
-      const changed = refusal(identity);
+      const changed = kind === "owner" ? ownerRefusal(identity.generation) : refusal(identity);
       if (changed) return { commandId: identity.commandId, status: "blocked", message: changed };
       let finish!: () => void;
-      const context: Running = { request: identity, secret: kind === "secret", done: new Promise<void>((resolve) => { finish = resolve; }), abort: new AbortController(), tainted: false, dispatched: false };
+      const context: Running = { request: identity, secret: kind !== "command", done: new Promise<void>((resolve) => { finish = resolve; }), abort: new AbortController(), tainted: false, dispatched: false };
       running = context;
       try {
         const data = await work();
@@ -583,7 +690,7 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
         const expected = error instanceof OperationError || error instanceof SecretFillError;
         const unknown = context.tainted || (mutating && !expected);
         const status = unknown ? "outcome_unknown" : expected ? error.status : "failed";
-        return { commandId: identity.commandId, status, message: expected || (kind === "command" && error instanceof UncertainProcessError) ? error.message : kind === "secret" ? "secret fill failed" : "browser command failed" };
+        return { commandId: identity.commandId, status, message: expected || (kind === "command" && error instanceof UncertainProcessError) ? error.message : kind === "owner" ? "owner fill failed" : kind === "secret" ? "secret fill failed" : "browser command failed" };
       } finally { running = undefined; finish(); }
     });
     const stored = command.then((result) => {
@@ -631,7 +738,7 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
             if (error instanceof OperationError) throw error;
             throw new OperationError("failed", "cannot terminate agent-browser daemon for control lease change");
           } finally {
-            // Secret input uses our CDP connection as well as the daemon. Close it before publishing owner control.
+            // Secret input uses our CDP connection as well as the daemon. Close it before publishing the next lease.
             if (active.secret) deps.cdp.close();
             active.abort.abort();
             await active.done;
@@ -711,6 +818,17 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
           agentBrowserReady: ready && !fault, lease: { ...lease } } };
       }
       if (request.method === "POST" && url.pathname === "/v1/commands") return { statusCode: 200, body: await execute(request.body) };
+      if (request.method === "GET" && url.pathname === "/v1/owner-focus") {
+        const generation = z.coerce.number().int().positive().parse(url.searchParams.get("generation"));
+        try { return { statusCode: 200, headers: { "content-type": "application/json", "cache-control": "no-store" }, body: await ownerFocus(generation) }; }
+        catch (error) {
+          if (error instanceof OperationError) return { statusCode: 409, headers: { "content-type": "application/json", "cache-control": "no-store" }, body: { status: error.status, message: error.message } };
+          throw error;
+        }
+      }
+      if (request.method === "POST" && url.pathname === "/v1/owner-fill") {
+        return { statusCode: 200, headers: { "content-type": "application/json", "cache-control": "no-store" }, body: await ownerFill(request.body) };
+      }
       if (request.method === "POST" && url.pathname === "/v1/secret-fill") return { statusCode: 200, body: await secretFill(request.body) };
       const commandId = /^\/v1\/commands\/([A-Za-z0-9_-]{8,64})$/.exec(url.pathname)?.[1];
       if (request.method === "GET" && commandId) {

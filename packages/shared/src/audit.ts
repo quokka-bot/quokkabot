@@ -11,6 +11,7 @@ export const AuditType = z.enum([
   "owner.passkey_registered",
   "owner.signed_in",
   "owner.signed_out",
+  "owner.filled_field",
   "claude.signed_in",
   "owner.fresh_auth",
   "agent.created",

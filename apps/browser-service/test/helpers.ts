@@ -121,7 +121,7 @@ export class FakeCdp extends EventEmitter implements CdpConnection {
         }
         return branch(frame);
       }
-      return { frameTree: tree(this.frames, null) };
+      return { frameTree: tree(this.frames.filter((frame) => (frame.pageTarget ?? "target_1") === sessionId?.slice("session_".length)), null) };
     }
     if (method === "Page.createIsolatedWorld") {
       const frame = this.frames.find((frame) => frame.id === params.frameId);
@@ -140,7 +140,7 @@ export class FakeCdp extends EventEmitter implements CdpConnection {
       }
       const frame = this.frames.find((item) => item.id === frameId);
       if (!frame) throw new Error("Isolated world frame disappeared");
-      return { result: { type: "object", ...(frame.field === null ? { subtype: "null" } : {}), value: frame.field } };
+      return { result: { type: "object", ...(frame.field === null ? { subtype: "null" } : {}), value: runInFakePage(`function () { return ${String(params.expression)}; }`, frame, []) } };
     }
     if (method === "Runtime.callFunctionOn") {
       const frameId = this.worlds.get(`${sessionId}:${Number(params.executionContextId)}`);
@@ -164,6 +164,7 @@ export interface FakeFrame {
   origin: string;
   parentId: string | null;
   outOfProcess?: boolean;
+  pageTarget?: string;
   field: { tag: string; type: string; autocomplete: string; maxLength: number; inputMode: string; disabled: boolean; readOnly: boolean; hints: string } | null;
   // What the page's field holds after an insertion.
   inserted?: string;
@@ -198,7 +199,7 @@ function runInFakePage(functionDeclaration: string, frame: FakeFrame, args: unkn
       return true;
     },
   };
-  return runInNewContext(`(${functionDeclaration})(...args)`, { document, location: { origin: frame.origin }, HTMLInputElement, args });
+  return runInNewContext(`(${functionDeclaration})(...args)`, { document, location: { origin: frame.origin }, HTMLInputElement, URL, args });
 }
 export interface Harness {
   service: BrowserService;
