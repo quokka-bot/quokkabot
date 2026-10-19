@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 
 const files = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], { encoding: "utf8" })
   .split("\n")
-  .filter((f) => f && !f.startsWith("private/") && /\.(ts|tsx|js|mjs|cjs|json|md|yaml|yml|sh|conf|html|css|Dockerfile)$|Dockerfile$/.test(f));
+  .filter((f) => f && !f.startsWith("private/") && /\.(ts|tsx|astro|js|mjs|cjs|json|md|yaml|yml|sh|conf|html|css|svg|Dockerfile)$|Dockerfile$/.test(f));
 
 // Built from its code point so this file does not contain the character it looks for.
 const EM_DASH = String.fromCharCode(0x2014);

@@ -1,0 +1,40 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { GITHUB_DISCUSSIONS_URL, GITHUB_ISSUES_URL, GITHUB_SECURITY_URL, INSTALL_GUIDE_URL, SUPPORT_EMAIL } from "../lib/site";
+---
+
+<Layout title="Support · Quokka Bot" description="Get help with Quokka Bot: GitHub issues, GitHub Discussions and email.">
+  <article class="doc">
+    <h1>Support</h1>
+    <p class="doc-lede">Ask on GitHub to get an answer the next person can find too. Email works as well.</p>
+
+    <div class="contact-cards">
+      <section class="contact-card" aria-labelledby="bugs">
+        <h2 id="bugs">Something is broken</h2>
+        <p>Open an issue with what you did, what happened and your version. Screenshots help.</p>
+        <div class="actions"><a class="button primary" href={GITHUB_ISSUES_URL}>Report a bug</a></div>
+      </section>
+      <section class="contact-card" aria-labelledby="questions">
+        <h2 id="questions">Questions and ideas</h2>
+        <p>Ask how to do something, share a setup or suggest a feature in Discussions.</p>
+        <div class="actions"><a class="button" href={GITHUB_DISCUSSIONS_URL}>Open Discussions</a></div>
+      </section>
+      <section class="contact-card" aria-labelledby="email">
+        <h2 id="email">Email</h2>
+        <p>For anything you would rather not post in public, including questions about the Mac and iPhone apps and privacy requests.</p>
+        <div class="actions"><a class="button" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a></div>
+      </section>
+      <section class="contact-card" aria-labelledby="security">
+        <h2 id="security">Security issues</h2>
+        <p>Report vulnerabilities privately through GitHub, never in a public issue. You get an acknowledgement within three working days.</p>
+        <div class="actions"><a class="button" href={GITHUB_SECURITY_URL}>Report a vulnerability</a></div>
+      </section>
+    </div>
+
+    <h2 id="self-hosting">Running your own server</h2>
+    <p>
+      The <a href={INSTALL_GUIDE_URL}>install guide</a> covers requirements, the encrypted data volume, backups and
+      restoring. Include the output of <code>quokkabot-compose ps</code> when you report a problem with a server.
+    </p>
+  </article>
+</Layout>
