@@ -1,0 +1,169 @@
+---
+// Every statement here comes from the code. When a change sends data somewhere new or stores something new, update
+// this page in the same pull request (AGENTS.md).
+import Layout from "../layouts/Layout.astro";
+import { GITHUB_URL, OPERATOR, PRIVACY_UPDATED, SUPPORT_EMAIL } from "../lib/site";
+
+const updated = new Date(`${PRIVACY_UPDATED}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+---
+
+<Layout
+  title="Privacy · Quokka Bot"
+  description="How Quokka Bot handles data on this website, in the Mac and iPhone apps, and on a Quokka Bot server."
+>
+  <article class="doc">
+    <h1>Privacy</h1>
+    <p class="doc-lede">How Quokka Bot handles data: on this website, in the Mac and iPhone apps, and on a Quokka Bot server.</p>
+    <p class="doc-date">Last updated {updated}</p>
+
+    <section class="summary" aria-labelledby="short">
+      <h2 id="short">The short version</h2>
+      <ul>
+        <li>Quokka Bot runs on a server its owner controls. Tasks, chats, files and saved logins are stored on that server. We do not receive them.</li>
+        <li>The Mac and iPhone apps connect only to the server you sign in to. They contain no analytics, advertising or tracking.</li>
+        <li>The agent's work goes to Anthropic, the maker of Claude, under the Claude plan the server's owner signs in with.</li>
+        <li>Saved passwords and 2FA secrets are encrypted on the server. Quokka Bot types them into pages; the AI model never sees them.</li>
+        <li>This website sets no cookies and runs no analytics or scripts.</li>
+        <li>We receive personal data when you write to us, and on servers we run ourselves, such as app.quokkabot.com.</li>
+      </ul>
+    </section>
+
+    <h2 id="who">Who we are</h2>
+    <p>
+      Quokka Bot is open-source software. {OPERATOR.name} ("we") publishes this website, the Mac app and the iPhone app,
+      and answers email sent to {SUPPORT_EMAIL}:
+    </p>
+    <address>
+      <strong>{OPERATOR.name}</strong><br />
+      {OPERATOR.address.map((line, index) => (index < OPERATOR.address.length - 1 ? <>{line}<br /></> : line))}<br />
+      <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
+    </address>
+
+    <h2 id="server">A Quokka Bot server</h2>
+    <p>
+      Each Quokka Bot server is run by its owner: the person or organisation that installed it. The owner decides what
+      the agents do and who signs in, and is responsible for the data on the server. We have no access to servers that
+      other people run, and the software sends us nothing. For servers we run ourselves, such as app.quokkabot.com, we
+      are the owner.
+    </p>
+
+    <h3>What the server stores</h3>
+    <ul>
+      <li>The owner's name and passkeys (public keys only), and the signed-in sessions and devices.</li>
+      <li>Tasks and chats: the owner's messages and images, the agent's replies, a one-line summary of each step (the page it opened, the command it ran) and a short excerpt of what each step returned.</li>
+      <li>Files: downloads, attachments and each agent's workspace.</li>
+      <li>Each agent's browser profile: cookies, history and site data for the sites it used.</li>
+      <li>Saved logins: a name, the sites and the username. Passwords and 2FA secrets are encrypted with AES-256-GCM; the key is kept outside the database.</li>
+      <li>If Gmail is connected: the Gmail address and an encrypted refresh token.</li>
+      <li>The Claude account the agent signed in with (its email and plan type) and the Claude CLI's own sign-in file.</li>
+      <li>An activity log of what the agent and the owner did: pages, files, commands, downloads and the names of logins used. Text typed into messages and forms is stored there only as a hash. Each entry is chained to the one before it, so changes can be detected.</li>
+      <li>Logs: requests to the server with the visitor's IP address, and every host an agent's computer connected to.</li>
+    </ul>
+    <p>Everything is stored on an encrypted volume on the server.</p>
+
+    <h3>How long it is kept</h3>
+    <ul>
+      <li>Until the owner deletes it. Deleting a login or disconnecting Gmail removes it at once; disconnecting Gmail also revokes the access at Google.</li>
+      <li>Removing an agent deletes its tasks, files, browser profile, logins and Gmail connection. The activity log stays, so the record of what happened is complete.</li>
+      <li>Request and connection logs are kept up to a fixed size, then the oldest lines are dropped.</li>
+      <li>If backups are on, snapshots are kept for up to 12 months, so deleted data can remain in them until they expire.</li>
+    </ul>
+
+    <h3>Who the server sends data to</h3>
+    <ul>
+      <li>
+        <strong>Anthropic</strong>, for every task. The agent runs Claude Code signed in with the owner's Claude plan.
+        Anthropic receives what the agent works with: the owner's messages and images, page text and screenshots,
+        files it reads, command output, email it reads, and the names, usernames and sites of saved logins (never
+        passwords or 2FA codes). Anthropic's terms and privacy policy apply, including whether it uses this data to train
+        models. Quokka Bot turns off Claude Code's telemetry, error reporting and other non-essential traffic.
+      </li>
+      <li>
+        <strong>Sites the agent visits</strong>, only those the owner allowed. They see the server's IP address and
+        what the task needs: searches, form entries and sign-ins. DuckDuckGo is allowed by default for searching.
+      </li>
+      <li>
+        <strong>DNS resolvers</strong>: Cloudflare (1.1.1.1) and Quad9 (9.9.9.9) look up the names of the sites the
+        agent may reach, unless the owner sets other resolvers.
+      </li>
+      <li><strong>Google</strong>, only if the owner connects Gmail, through a Google project the owner sets up: to search, read and draft mail.</li>
+      <li><strong>Let's Encrypt</strong>: the server's domain names, for its HTTPS certificates.</li>
+      <li>
+        <strong>A storage bucket the owner chooses</strong>, only if backups are on: encrypted copies of the database
+        and the agents' files, browser profiles included. Claude sign-ins and the encryption keys are never in backups.
+      </li>
+    </ul>
+
+    <h2 id="mac">The Mac app</h2>
+    <ul>
+      <li>It connects only to the server address you enter, over HTTPS.</li>
+      <li>You approve its sign-in with a passkey on the server. It names itself "Quokka Bot on" followed by your Mac's name, so you can recognise it in the server's list of devices.</li>
+      <li>On your Mac it stores its settings (server address, notifications, download folder, window position), its session cookie, which macOS keeps encrypted, and the files you download, in Downloads/Quokka Bot.</li>
+      <li>Notifications are shown by macOS. By default they include the agent's question; turn off "Show details in notifications" to hide it.</li>
+      <li>It checks for updates every 6 hours, from the server you connected to.</li>
+      <li>It has no analytics and sends no crash reports.</li>
+      <li>The installer downloads from app.quokkabot.com, which logs your IP address like any request to a Quokka Bot server.</li>
+    </ul>
+
+    <h2 id="iphone">The iPhone app</h2>
+    <ul>
+      <li>It connects only to the server you sign in to and keeps the sign-in in the iOS Keychain.</li>
+      <li>What you write and approve in it goes to that server, which handles it as described above, Anthropic included.</li>
+      <li>It has no analytics, advertising or tracking of its own.</li>
+      <li>Apple delivers the app through the App Store under Apple's privacy policy. If you allow it in iOS Settings, Apple shares crash reports and usage statistics with us.</li>
+    </ul>
+
+    <h2 id="website">This website</h2>
+    <p>
+      quokkabot.com is a set of static pages served by Cloudflare. It sets no cookies, runs no scripts and loads
+      nothing from other sites. Cloudflare processes your IP address and request details to deliver the pages and
+      protect them from attacks, under Cloudflare's privacy policy. We see only total traffic counts in Cloudflare's
+      dashboard.
+    </p>
+
+    <h2 id="support">Email and GitHub</h2>
+    <ul>
+      <li>
+        Email to {SUPPORT_EMAIL} is forwarded by Cloudflare Email Routing to our mailbox at Google. We use it only to
+        answer you, keep it while we help you and follow up, and delete it when you ask.
+      </li>
+      <li>
+        Issues and discussions on <a href={GITHUB_URL}>GitHub</a> are public, apart from private security reports.
+        GitHub's privacy statement applies there.
+      </li>
+    </ul>
+
+    <h2 id="basis">Legal basis</h2>
+    <p>
+      We answer email and keep this website running and secure because we have a legitimate interest in supporting our
+      software (Article 6(1)(f) of the GDPR). On a Quokka Bot server, the owner decides why data is processed and on what
+      basis.
+    </p>
+
+    <h2 id="transfers">Processing outside the EU</h2>
+    <p>
+      Anthropic, Cloudflare, Google and GitHub may process data outside the European Economic Area, including in the
+      United States, under safeguards such as the EU–US Data Privacy Framework or the European Commission's standard
+      contractual clauses.
+    </p>
+
+    <h2 id="rights">Your rights</h2>
+    <p>
+      You can ask us for a copy of the data we hold about you, and ask us to correct it, delete it, restrict its use or
+      stop using it. You can also complain to a data protection authority, for example in the country where you live.
+      For data on a Quokka Bot server someone else runs, ask that server's owner; we cannot reach it.
+    </p>
+
+    <h2 id="children">Children</h2>
+    <p>Quokka Bot is not meant for children under 16, and we do not knowingly collect their data.</p>
+
+    <h2 id="changes">Changes</h2>
+    <p>
+      We update this page when the software or our services change. The date at the top shows the last change, and the
+      page's full history is public in the <a href={GITHUB_URL}>GitHub repository</a>.
+    </p>
+
+    <h2 id="contact">Contact</h2>
+    <p>Questions and requests: <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.</p>
+  </article>
+</Layout>

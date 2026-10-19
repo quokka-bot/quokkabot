@@ -1,0 +1,188 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Shot from "../components/Shot.astro";
+import { GITHUB_DISCUSSIONS_URL, GITHUB_URL, INSTALL_GUIDE_URL, MAC_DOWNLOAD } from "../lib/site";
+import chat from "../assets/screens/chat.webp";
+import phoneChat from "../assets/screens/phone-chat.webp";
+import liveView from "../assets/screens/live-view.webp";
+import computer from "../assets/screens/computer.webp";
+import siteRequest from "../assets/screens/site-request.webp";
+import phoneSiteRequest from "../assets/screens/phone-site-request.webp";
+import loginForm from "../assets/screens/login-form.webp";
+import phoneLoginForm from "../assets/screens/phone-login-form.webp";
+import takeover from "../assets/screens/takeover.webp";
+import phoneTakeover from "../assets/screens/phone-takeover.webp";
+import activityLog from "../assets/screens/activity-log.webp";
+import phoneActivityLog from "../assets/screens/phone-activity-log.webp";
+
+const installCommands = [
+  "git clone https://github.com/quokka-bot/quokkabot.git /opt/quokkabot/src",
+  "export QUOKKABOT_DOMAIN=bot.example.com",
+  "export QUOKKABOT_VIEW_DOMAIN=view.bot.example.com",
+  "/opt/quokkabot/src/deploy/install.sh --setup-volume /dev/sdb",
+];
+
+// The five boundaries, each with the real screen that shows it.
+const safety = [
+  {
+    id: "computer",
+    title: "Its own computer",
+    text: "Each agent gets isolated sandboxes for its browser, its shell and its CLI. Nothing runs on your Mac or phone.",
+    image: computer,
+    narrow: undefined,
+    alt: "The agent's own Chrome, seen live from the app, on the museum's gallery page.",
+  },
+  {
+    id: "sites",
+    title: "Only sites you allow",
+    text: "All traffic goes through a proxy that blocks everything by default. The agent asks before it reaches a new site; you allow it for one task or for good.",
+    image: siteRequest,
+    narrow: phoneSiteRequest,
+    alt: "A card in the chat: the agent asks to reach notebookcheck.net and theverge.com, with Allow for this task, Always allow and Refuse.",
+  },
+  {
+    id: "vault",
+    title: "A vault the model can't read",
+    text: "Passwords and 2FA secrets are encrypted on your server. Quokka Bot types them into the page; the model never sees them.",
+    image: loginForm,
+    narrow: phoneLoginForm,
+    alt: "A sign-in card in the chat with a secure form for a username, a password and an authenticator code.",
+  },
+  {
+    id: "takeover",
+    title: "Takeover",
+    text: "For a captcha, a text-message code or a card payment, take over the browser from the app, then hand it back.",
+    image: takeover,
+    narrow: phoneTakeover,
+    alt: "The computer page while the owner has control: Hand back, and the Stop everything button.",
+  },
+  {
+    id: "audit",
+    title: "Audit log and kill switch",
+    text: "Every action goes into a hash-chained log you can verify. One button stops the computer and cuts its network.",
+    image: activityLog,
+    narrow: phoneActivityLog,
+    alt: "The activity log: the chain head hash with Verify chain, then entries for a takeover and for sites the owner allowed.",
+  },
+];
+---
+
+<Layout
+  title="Quokka Bot: an AI agent with its own computer"
+  description="Quokka Bot gives an AI agent its own computer with a browser. You give it a task in a chat; it does the task and asks only when it needs you. Open source, runs on one server."
+  pageClass="home"
+>
+  <section class="hero">
+    <div class="wrap hero-text">
+      <h1>An AI agent with its own computer.</h1>
+      <p class="lede">
+        Give it a task in a chat. It opens its own browser, signs in with logins you saved and gets it done. It asks
+        you only for new sites, money and things only you can do.
+      </p>
+      <div class="actions">
+        <a class="button primary" href="/download/mac">Download for Mac</a>
+        <a class="button" href="#self-host">Self-host it</a>
+      </div>
+      <p class="fine">Open source (MIT) · Runs on your own Claude plan</p>
+    </div>
+    <div class="wrap hero-shots">
+      <figure class="window window-main">
+        <Shot
+          wide={chat}
+          narrow={phoneChat}
+          sizes="(min-width: 1240px) 1120px, 92vw"
+          alt="The Quokka Bot app: an agent called Errands answers when the Rijksmuseum is open on Sunday and what tickets cost, after the owner allowed rijksmuseum.nl for the task."
+          eager
+        />
+      </figure>
+      <figure class="window window-live">
+        <Shot wide={liveView} sizes="(min-width: 1240px) 460px, 86vw" alt="The agent's own browser, seen live: the museum's page with the prices it read." />
+        <figcaption><span class="dot" aria-hidden="true"></span>Its computer, live</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="steps wrap" aria-labelledby="steps-title">
+    <h2 id="steps-title">How a task goes</h2>
+    <ol class="step-list">
+      <li>
+        <h3>You ask.</h3>
+        <p>Write the task like a message: check a museum's opening hours, download last month's invoice, compare three reviews.</p>
+      </li>
+      <li>
+        <h3>It works on its own computer.</h3>
+        <p>Chrome, a workspace and Claude Code run in sandboxes on your server. Watch it live from the app.</p>
+      </li>
+      <li>
+        <h3>It asks only when it must.</h3>
+        <p>A new site, a missing login or a payment shows up as a card in the chat. Answer with one tap, or type a message to skip it.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="safety" id="safety" aria-labelledby="safety-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="safety-title">The safety rules sit outside the model.</h2>
+        <p>The agent reads untrusted pages and holds your logins, so nothing depends on the model behaving.</p>
+      </div>
+      <div class="safety-rows">
+        {safety.map((item, index) => (
+          <article class:list={["safety-row", { flip: index % 2 === 1 }]} id={item.id}>
+            <div class="safety-copy">
+              <p class="safety-index">{String(index + 1).padStart(2, "0")}</p>
+              <h3>{item.title}</h3>
+              <p>{item.text}</p>
+            </div>
+            <figure class="shot">
+              <Shot wide={item.image} narrow={item.narrow} sizes="(min-width: 1000px) 680px, 92vw" alt={item.alt} />
+            </figure>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="selfhost" id="self-host" aria-labelledby="selfhost-title">
+    <div class="wrap selfhost-grid">
+      <div class="selfhost-copy">
+        <h2 id="selfhost-title">Runs on one server you control.</h2>
+        <p>
+          One Linux server runs everything: the app, the database, the proxy and every agent's computer. A server with 4
+          vCPU and 8 GB of RAM runs four agents. Tasks, files and logins are stored on that server.
+        </p>
+        <p>Bring your own Claude plan. Each agent runs the official Claude Code CLI, signed in with your account.</p>
+        <p><a class="text-link" href={INSTALL_GUIDE_URL}>Read the install guide</a></p>
+      </div>
+      <pre class="code" aria-label="Install commands"><code>{installCommands.map((line) => <span class="line"><span class="prompt" aria-hidden="true">$ </span>{line}</span>)}</code></pre>
+    </div>
+  </section>
+
+  <section class="apps wrap" id="download" aria-labelledby="apps-title">
+    <h2 id="apps-title">Use it from your Mac, your phone or a browser.</h2>
+    <div class="app-cards">
+      <article class="app-card">
+        <h3>Mac app</h3>
+        <p>Signed and notarized, for Apple silicon. Version {MAC_DOWNLOAD.version}.</p>
+        <a class="button primary" href="/download/mac">Download for Mac</a>
+      </article>
+      <article class="app-card">
+        <h3>iPhone app <span class="badge">Coming soon</span></h3>
+        <p>Answer cards and take over from your phone.</p>
+      </article>
+      <article class="app-card">
+        <h3>Web app</h3>
+        <p>The same app at your server's address, in any browser.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="open wrap" aria-labelledby="open-title">
+    <h2 id="open-title">Open source, MIT licensed.</h2>
+    <p>Read the code, report bugs and suggest ideas on GitHub.</p>
+    <div class="actions">
+      <a class="button primary" href={GITHUB_URL}>GitHub</a>
+      <a class="button" href={GITHUB_DISCUSSIONS_URL}>Discussions</a>
+    </div>
+  </section>
+</Layout>

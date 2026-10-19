@@ -9,3 +9,4 @@ coverage/
 private/
 .vitest/
 *.log
+.astro/

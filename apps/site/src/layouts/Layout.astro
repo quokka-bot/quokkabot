@@ -1,0 +1,73 @@
+---
+import "../styles/site.css";
+import { GITHUB_URL, publicPath } from "../lib/site";
+
+interface Props {
+  title: string;
+  description: string;
+  pageClass?: string;
+}
+
+const { title, description, pageClass } = Astro.props;
+const canonical = new URL(publicPath(Astro.url.pathname), Astro.site);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Quokka Bot" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={new URL("/social-card.png", Astro.site)} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#fcfcfc" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  </head>
+  <body class={pageClass}>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="nav">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="Quokka Bot home">
+          <img class="brand-mark" src="/icon.svg" width="30" height="30" alt="" />
+          <span>Quokka Bot</span>
+        </a>
+        <nav aria-label="Main">
+          <ul class="nav-links">
+            <li><a href="/#safety">Safety</a></li>
+            <li><a href="/#self-host">Self-host</a></li>
+            <li><a href="/#download">Download</a></li>
+            <li><a class="nav-github" href={GITHUB_URL}>GitHub</a></li>
+          </ul>
+        </nav>
+      </div>
+    </header>
+    <main id="main">
+      <slot />
+    </main>
+    <footer class="footer">
+      <div class="footer-inner">
+        <a class="brand" href="/">
+          <img class="brand-mark" src="/icon.svg" width="24" height="24" alt="" />
+          <span>Quokka Bot</span>
+        </a>
+        <ul class="footer-links">
+          <li><a href="/privacy">Privacy</a></li>
+          <li><a href="/support">Support</a></li>
+          <li><a href={GITHUB_URL}>GitHub</a></li>
+        </ul>
+        <p class="footer-note">Quokka Bot is open source under the MIT license.</p>
+      </div>
+    </footer>
+  </body>
+</html>
