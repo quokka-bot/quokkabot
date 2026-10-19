@@ -1289,4 +1289,17 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     expect(all.body).toMatchObject({ confirmed: true, agents: [{ agentId: AGENT, egressFrozen: true, sandboxesStopped: true, error: null }] });
     expect((await api("POST", "/api/agents/kill-all", {}, { cookie: false })).status).toBe(401);
   });
+
+  // Last in the file: it uses up this address's sign-in allowance for the minute.
+  it("rate-limits the routes that work without a session", async () => {
+    let limited: { status: number; body: any } | undefined;
+    for (let attempt = 0; attempt < 40 && !limited; attempt += 1) {
+      const response = await api("POST", "/api/auth/options", {}, { cookie: false });
+      if (response.status === 429) limited = response;
+    }
+    expect(limited?.body).toMatchObject({ error: { code: "rate_limited" } });
+    expect(String(limited?.body.error.message)).toMatch(/^Too many requests\. Try again in /);
+    // Signed-in routes keep their own, much larger allowance.
+    expect((await api("GET", "/api/inbox")).status).toBe(200);
+  });
 });

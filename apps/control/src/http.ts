@@ -35,6 +35,7 @@ import {
   siteLabel,
 } from "@quokkabot/shared";
 import cookie from "@fastify/cookie";
+import rateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type { Logger } from "pino";
 import WebSocket, { WebSocketServer } from "ws";
@@ -220,6 +221,15 @@ export function buildServer(deps: HttpDeps): { app: FastifyInstance; server: htt
   });
 
   const appRoute = { constraints: { host: config.appHost } };
+  // Requests per client address (Caddy passes it on). Every route has a ceiling; the routes that work without a
+  // session (setup, sign-in, desktop link, OAuth callback) have a tight one.
+  void app.register(rateLimit, {
+    global: true,
+    max: 1200,
+    timeWindow: "1 minute",
+    errorResponseBuilder: (_request, context) => new HttpError(429, "rate_limited", `Too many requests. Try again in ${context.after}.`),
+  });
+  const signInRoute = { ...appRoute, config: { rateLimit: { max: 30, timeWindow: "1 minute" } } };
   const viewRoute = { constraints: { host: config.viewHost } };
 
   async function requireSession(request: FastifyRequest): Promise<SessionInfo> {
@@ -296,36 +306,36 @@ export function buildServer(deps: HttpDeps): { app: FastifyInstance; server: htt
 
   // --- Sign-in -----------------------------------------------------------------------------------------------------
 
-  app.post("/api/setup/options", appRoute, async (request, reply) => {
+  app.post("/api/setup/options", signInRoute, async (request, reply) => {
     const { ticket } = parse(SetupOptionsRequest, request.body);
     const { challengeId, options } = await auth.setupOptions(ticket);
     setChallengeCookie(reply, challengeId);
     return options;
   });
-  app.post("/api/setup/verify", appRoute, async (request, reply) => {
+  app.post("/api/setup/verify", signInRoute, async (request, reply) => {
     const { ticket, response } = parse(SetupVerifyRequest, request.body);
     const token = await auth.setupVerify(ticket, request.cookies[CHALLENGE_COOKIE] ?? "", response);
     setSessionCookie(reply, token);
     return me();
   });
-  app.post("/api/auth/options", appRoute, async (_request, reply) => {
+  app.post("/api/auth/options", signInRoute, async (_request, reply) => {
     const { challengeId, options } = await auth.signinOptions("signin", null);
     setChallengeCookie(reply, challengeId);
     return options;
   });
-  app.post("/api/auth/verify", appRoute, async (request, reply) => {
+  app.post("/api/auth/verify", signInRoute, async (request, reply) => {
     const { response } = parse(AuthVerifyRequest, request.body);
     const token = await auth.signinVerify("signin", request.cookies[CHALLENGE_COOKIE] ?? "", response, null);
     if (token) setSessionCookie(reply, token);
     return me();
   });
-  app.post("/api/auth/fresh/options", appRoute, async (request, reply) => {
+  app.post("/api/auth/fresh/options", signInRoute, async (request, reply) => {
     const session = await requireSession(request);
     const { challengeId, options } = await auth.signinOptions("fresh", session.hash);
     setChallengeCookie(reply, challengeId);
     return options;
   });
-  app.post("/api/auth/fresh/verify", appRoute, async (request) => {
+  app.post("/api/auth/fresh/verify", signInRoute, async (request) => {
     const session = await requireSession(request);
     const { response } = parse(AuthVerifyRequest, request.body);
     await auth.signinVerify("fresh", request.cookies[CHALLENGE_COOKIE] ?? "", response, session.hash);
@@ -360,7 +370,7 @@ export function buildServer(deps: HttpDeps): { app: FastifyInstance; server: htt
     desktopDownloads: config.desktopRoot !== undefined,
     minDesktopVersion: MIN_DESKTOP_VERSION,
   }));
-  app.post("/api/desktop-link/start", appRoute, async (request) => {
+  app.post("/api/desktop-link/start", signInRoute, async (request) => {
     const body = parse(DesktopLinkStartRequest, request.body);
     const requester = body.kind === "fresh" ? await requireSession(request) : null;
     return desktopLinks.start(body.kind, body.deviceName, requester?.hash ?? null);
@@ -371,7 +381,7 @@ export function buildServer(deps: HttpDeps): { app: FastifyInstance; server: htt
     return desktopLinks.pending(userCode);
   });
   // Approving a desktop link takes a passkey assertion made for that link, in the browser, right now.
-  app.post("/api/desktop-link/approve/options", appRoute, async (request, reply) => {
+  app.post("/api/desktop-link/approve/options", signInRoute, async (request, reply) => {
     const session = await requireSession(request);
     const { userCode } = parse(DesktopLinkDecideRequest, request.body);
     const linkId = await desktopLinks.linkId(userCode);
@@ -379,7 +389,7 @@ export function buildServer(deps: HttpDeps): { app: FastifyInstance; server: htt
     setChallengeCookie(reply, challengeId);
     return options;
   });
-  app.post("/api/desktop-link/approve/verify", appRoute, async (request) => {
+  app.post("/api/desktop-link/approve/verify", signInRoute, async (request) => {
     const session = await requireSession(request);
     const { userCode, response } = parse(DesktopLinkApproveVerifyRequest, request.body);
     const linkId = await desktopLinks.linkId(userCode);
@@ -387,7 +397,7 @@ export function buildServer(deps: HttpDeps): { app: FastifyInstance; server: htt
     await desktopLinks.approve(userCode, linkId);
     return {};
   });
-  app.post("/api/desktop-link/refuse", appRoute, async (request) => {
+  app.post("/api/desktop-link/refuse", signInRoute, async (request) => {
     await requireSession(request);
     const { userCode } = parse(DesktopLinkDecideRequest, request.body);
     await desktopLinks.refuse(userCode);
@@ -919,7 +929,7 @@ export function buildServer(deps: HttpDeps): { app: FastifyInstance; server: htt
     return {};
   });
   // Google sends the owner's browser here after the consent page. No session: the single-use state proves the start.
-  app.get<{ Querystring: { code?: string; state?: string; error?: string } }>("/api/connect/google/callback", async (request, reply) => {
+  app.get<{ Querystring: { code?: string; state?: string; error?: string } }>("/api/connect/google/callback", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
     const page = (ok: boolean, account: string | null, message: string) => reply.type("text/html; charset=utf-8").send(connectedPage(ok, account, message, config.appOrigin));
     if (request.query.error) return page(false, null, `Google said: ${request.query.error}. You can try again from Quokka Bot.`);
     if (!request.query.code || !request.query.state) return page(false, null, "The link is incomplete. Start again in Quokka Bot.");
