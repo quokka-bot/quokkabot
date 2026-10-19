@@ -10,7 +10,7 @@ export function redactRequestUrl(url: string): string {
   // Rebuild entries individually so duplicate and percent-encoded names receive the same treatment.
   const redacted = new URLSearchParams();
   for (const [key, value] of query) {
-    redacted.append(key, callback || (imageUpload && key.toLowerCase() === "name") || ["code", "state", "token"].includes(key.toLowerCase()) ? "[redacted]" : value);
+    redacted.append(key, callback || (imageUpload && key.toLowerCase() === "name") || ["code", "state", "token", "ticket"].includes(key.toLowerCase()) ? "[redacted]" : value);
   }
   return `${path}?${redacted}`;
 }

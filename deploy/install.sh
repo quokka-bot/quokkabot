@@ -374,6 +374,8 @@ load_settings() {
   QUOKKABOT_RESOLVERS=${QUOKKABOT_RESOLVERS:-1.1.1.1,9.9.9.9}
   # Optional contact address on the public About and Privacy pages.
   QUOKKABOT_PUBLIC_CONTACT=${QUOKKABOT_PUBLIC_CONTACT:-$(env_value QUOKKABOT_PUBLIC_CONTACT)}
+  # Optional iPhone app builds allowed native passkeys on this domain, comma-separated "<team id>.<bundle id>".
+  QUOKKABOT_APPLE_APP_IDS=${QUOKKABOT_APPLE_APP_IDS:-$(env_value QUOKKABOT_APPLE_APP_IDS)}
   # Group of the Docker socket as containers see it (the supervisor joins it).
   DOCKER_GID=$(docker run --rm --network none -v /var/run/docker.sock:/var/run/docker.sock:ro \
     caddy:2.11.7@sha256:685ae3d7c34d9b5f8caeddc5d14051db7bbd88ff1f5a2fa0c16bd8ca328fb7af stat -c %g /var/run/docker.sock)
@@ -428,6 +430,9 @@ EOF
   done
   if [[ -n "$QUOKKABOT_PUBLIC_CONTACT" ]]; then
     echo "QUOKKABOT_PUBLIC_CONTACT=$QUOKKABOT_PUBLIC_CONTACT" >>"$ENV_FILE.tmp"
+  fi
+  if [[ -n "$QUOKKABOT_APPLE_APP_IDS" ]]; then
+    echo "QUOKKABOT_APPLE_APP_IDS=$QUOKKABOT_APPLE_APP_IDS" >>"$ENV_FILE.tmp"
   fi
   if [[ "$MODE" == dev ]]; then
     echo "QUOKKABOT_DEV_PORT=$QUOKKABOT_DEV_PORT" >>"$ENV_FILE.tmp"
@@ -673,7 +678,7 @@ write_configs() {
   local slots
   slots=$(printf '%s\n' "${AGENT_IDS[@]}" | paste -sd, -)
   env APP_ORIGIN="$APP_ORIGIN" VIEW_ORIGIN="$VIEW_ORIGIN" AGENT_IDS="$slots" RUNTIME="$RUNTIME" DATA="$DATA" \
-    PUBLIC_CONTACT="${QUOKKABOT_PUBLIC_CONTACT:-}" \
+    PUBLIC_CONTACT="${QUOKKABOT_PUBLIC_CONTACT:-}" APPLE_APP_IDS="${QUOKKABOT_APPLE_APP_IDS:-}" \
     IMAGE_CLI="$IMAGE_CLI" IMAGE_TOOLS="$IMAGE_TOOLS" IMAGE_BROWSER="$IMAGE_BROWSER" \
     HOST_ADDRESSES="$addresses" RESOLVERS="$QUOKKABOT_RESOLVERS" OUT="$ETC" \
     python3 - <<'PY'
@@ -688,6 +693,7 @@ control = {
     "viewOrigin": env["VIEW_ORIGIN"],
     "ownerName": "Owner",
     **({"publicContact": env["PUBLIC_CONTACT"]} if env.get("PUBLIC_CONTACT") else {}),
+    **({"appleAppIds": [i.strip() for i in env["APPLE_APP_IDS"].split(",") if i.strip()]} if env.get("APPLE_APP_IDS") else {}),
     "dataRoot": "/data",
     "desktopRoot": "/data/desktop",
     "secretsDir": "/run/secrets",

@@ -37,15 +37,15 @@ export class SoftPasskey {
     ]);
   }
 
-  // An assertion for authentication options returned by the server.
-  assert(options: { challenge: string }): Record<string, unknown> {
+  // An assertion for authentication options returned by the server, made on `origin` (this passkey's own by default).
+  assert(options: { challenge: string }, origin = this.origin): Record<string, unknown> {
     this.counter += 1;
     const rpIdHash = createHash("sha256").update(this.rpId).digest();
     const flags = Buffer.from([0x05]); // user present and user verified
     const count = Buffer.alloc(4);
     count.writeUInt32BE(this.counter);
     const authenticatorData = Buffer.concat([rpIdHash, flags, count]);
-    const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.get", challenge: options.challenge, origin: this.origin, crossOrigin: false }));
+    const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.get", challenge: options.challenge, origin, crossOrigin: false }));
     const signature = sign("sha256", Buffer.concat([authenticatorData, createHash("sha256").update(clientDataJSON).digest()]), this.keys.privateKey);
     return {
       id: this.id,

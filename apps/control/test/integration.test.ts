@@ -16,7 +16,9 @@ import pino from "pino";
 import { WebSocket } from "ws";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type ControlHandles, startControl } from "../src/app.js";
-import { killCapability } from "../src/auth.js";
+import { Auth, killCapability } from "../src/auth.js";
+import { AuditLog } from "../src/audit.js";
+import { newPairingCode, pairingCodeHash } from "../src/pairing.js";
 import { SoftPasskey } from "./soft-passkey.js";
 import { parseTotp, totpCode } from "../src/vault.js";
 import type { ControlConfig } from "../src/config.js";
@@ -76,6 +78,7 @@ describe.skipIf(!enabled)("control plane end to end", () => {
   let db: pg.Pool;
   let killSecret: Buffer;
   let passkey: SoftPasskey;
+  let controlConfig: ControlConfig;
   const googleClient = { clientId: "integration-google-client", clientSecret: "integration-google-secret" };
   const googleRequests: { url: URL; method: string; body: string; authorization: string | null }[] = [];
   let restoreFetch: (() => void) | undefined;
@@ -262,6 +265,7 @@ describe.skipIf(!enabled)("control plane end to end", () => {
       appHost: `localhost:${appPort}`,
       viewHost: `view.localhost:${appPort}`,
       ownerName: "Owner",
+      appleAppIds: ["ABCDE12345.com.example.quokkabot"],
       dataRoot: "/data",
       secretsDir: "/run/secrets",
       listen: `127.0.0.1:${appPort}`,
@@ -283,6 +287,7 @@ describe.skipIf(!enabled)("control plane end to end", () => {
         vaultKey: randomBytes(32), googleClient, supervisorToken, egressToken, perAgent: new Map([AGENT, AGENT2].map(id => [id, { selkiesMasterToken: selkiesMaster, browserServiceToken: browserToken }])),
       },
     };
+    controlConfig = config;
     control = await startControl(config, pino({ level: "warn" }), mkdtempSync(join(tmpdir(), "qb-web-")));
     db = new pg.Pool({ host: "127.0.0.1", port: dbPort, user: "quokkabot_app", password: config.secrets.dbAppPassword, database: "quokkabot" });
     // Sign the owner in directly; passkey ceremonies are covered elsewhere.
@@ -302,7 +307,7 @@ describe.skipIf(!enabled)("control plane end to end", () => {
   });
 
   // node:http, not fetch: fetch drops a custom Host header, and the server routes by Host.
-  function api(method: string, path: string, payload?: unknown, opts: { origin?: string | null; cookie?: boolean; extraCookie?: string; response?: "text"; headers?: Record<string, string>; host?: string } = {}): Promise<{ status: number; body: any; setCookie: string[] }> {
+  function api(method: string, path: string, payload?: unknown, opts: { origin?: string | null; cookie?: boolean; extraCookie?: string; response?: "text"; headers?: Record<string, string>; host?: string } = {}): Promise<{ status: number; body: any; setCookie: string[]; headers: http.IncomingHttpHeaders }> {
     const headers: Record<string, string> = { host: opts.host ?? `localhost:${appPort}`, ...opts.headers };
     const cookies = [opts.cookie !== false ? `qb_session=${sessionToken}` : "", opts.extraCookie ?? ""].filter(Boolean);
     if (cookies.length > 0) headers.cookie = cookies.join("; ");
@@ -319,7 +324,7 @@ describe.skipIf(!enabled)("control plane end to end", () => {
         res.on("data", (c: Buffer) => chunks.push(c));
         res.on("end", () => {
           const text = Buffer.concat(chunks).toString();
-          resolve({ status: res.statusCode ?? 0, body: text ? (opts.response === "text" ? text : JSON.parse(text)) : null, setCookie: res.headers["set-cookie"] ?? [] });
+          resolve({ status: res.statusCode ?? 0, body: text ? (opts.response === "text" ? text : JSON.parse(text)) : null, setCookie: res.headers["set-cookie"] ?? [], headers: res.headers });
         });
       });
       req.on("error", reject);
@@ -1385,6 +1390,107 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     // The owner session itself is still signed in: only the viewer's capability ended.
     expect((await api("GET", "/api/me", undefined, { cookie: false, headers: bearer(phone.token) })).status).toBe(200);
   }, 30_000);
+
+  const nativeApp = { cookie: false, origin: null } as const;
+  async function phoneSessionRow(token: string) {
+    return (await db.query<{ client: string; device_name: string; fresh_until: Date | null; absolute_expires_at: Date | null }>(
+      "select client, device_name, fresh_until, absolute_expires_at from sessions where hash = $1", [sha256Hex(token)])).rows[0];
+  }
+
+  it("signs a phone in with a passkey, bound to a phone challenge and the app's origin, with the token only in the body", async () => {
+    expect((await api("GET", "/api/desktop/info", undefined, nativeApp)).body.phoneApi).toBe(1);
+    const options = await api("POST", "/api/phone/passkey/options", {}, nativeApp);
+    expect(options.status).toBe(200);
+    expect(options.headers["cache-control"]).toBe("no-store");
+    expect(options.setCookie).toEqual([]);
+    const verify = (challengeId: string, response: unknown) => api("POST", "/api/phone/passkey/verify", { challengeId, response, deviceName: "Owner's iPhone" }, nativeApp);
+    // Made on another origin: refused.
+    expect((await verify(options.body.challengeId, passkey.assert(options.body.options, "https://evil.example"))).status).toBe(403);
+    // The refused attempt used the challenge up; a new one signs in.
+    const again = await api("POST", "/api/phone/passkey/options", {}, nativeApp);
+    const signedIn = await verify(again.body.challengeId, passkey.assert(again.body.options));
+    expect(signedIn.status).toBe(200);
+    expect(signedIn.setCookie).toEqual([]);
+    expect(signedIn.headers["cache-control"]).toBe("no-store");
+    const token = signedIn.body.token as string;
+    expect(await phoneSessionRow(token)).toMatchObject({ client: "phone", device_name: "Owner's iPhone", fresh_until: null });
+    expect((await phoneSessionRow(token))!.absolute_expires_at).not.toBeNull();
+    expect((await api("GET", "/api/me", undefined, { ...nativeApp, headers: bearer(token) })).status).toBe(200);
+    // Used once.
+    expect((await verify(again.body.challengeId, passkey.assert(again.body.options))).status).toBe(403);
+    // A browser sign-in challenge cannot finish a phone sign-in.
+    const browser = await api("POST", "/api/auth/options", {}, { cookie: false });
+    const browserChallenge = browser.setCookie.find((c) => c.startsWith("qb_challenge="))!.split(";")[0]!.slice("qb_challenge=".length);
+    expect((await verify(browserChallenge, passkey.assert(browser.body))).status).toBe(403);
+  });
+
+  it("signs a phone in through a link approved in the browser, and each app collects only its own links", async () => {
+    const started = await api("POST", "/api/phone/link/start", { deviceName: "Owner's iPhone" }, nativeApp);
+    expect(started.status).toBe(200);
+    expect(started.body.verifyUrl).toBe(`http://localhost:${appPort}/link#${started.body.userCode}`);
+    const poll = (path: string, pollToken: string) => api("POST", path, { pollToken }, nativeApp);
+    expect((await poll("/api/phone/link/poll", started.body.pollToken)).status).toBe(202);
+    expect((await api("GET", `/api/desktop-link/pending?code=${started.body.userCode}`)).body).toMatchObject({ kind: "signin", client: "phone", deviceName: "Owner's iPhone" });
+    await approveWithPasskey(started.body.userCode);
+    // The desktop poll neither collects nor spends a phone link.
+    const asDesktop = await api("POST", "/api/desktop-link/poll", { pollToken: started.body.pollToken }, { cookie: false });
+    expect(asDesktop.status).toBe(410);
+    expect(asDesktop.setCookie).toEqual([]);
+    const collected = await poll("/api/phone/link/poll", started.body.pollToken);
+    expect(collected.status).toBe(200);
+    expect(collected.body).toEqual({ state: "approved", token: expect.any(String) });
+    expect(collected.setCookie).toEqual([]);
+    expect(await phoneSessionRow(collected.body.token)).toMatchObject({ client: "phone", device_name: "Owner's iPhone", fresh_until: null });
+    expect((await api("GET", "/api/agents", undefined, { ...nativeApp, headers: bearer(collected.body.token) })).status).toBe(200);
+    expect((await poll("/api/phone/link/poll", started.body.pollToken)).status).toBe(410);
+    // The phone poll neither collects nor spends a desktop link.
+    const desktop = await api("POST", "/api/desktop-link/start", { kind: "signin", deviceName: "Some Mac" }, { cookie: false });
+    await approveWithPasskey(desktop.body.userCode);
+    expect((await poll("/api/phone/link/poll", desktop.body.pollToken)).body).toEqual({ state: "expired" });
+    expect((await api("POST", "/api/desktop-link/poll", { pollToken: desktop.body.pollToken }, { cookie: false })).body).toEqual({ state: "approved" });
+    // A refused link stays refused: it cannot be approved afterwards, refused twice, or collected.
+    const refused = await api("POST", "/api/phone/link/start", { deviceName: "Someone's iPhone" }, nativeApp);
+    expect((await api("POST", "/api/desktop-link/refuse", { userCode: refused.body.userCode })).status).toBe(200);
+    expect((await api("POST", "/api/desktop-link/approve/options", { userCode: refused.body.userCode })).status).toBe(404);
+    expect((await api("POST", "/api/desktop-link/refuse", { userCode: refused.body.userCode })).status).toBe(404);
+    expect((await poll("/api/phone/link/poll", refused.body.pollToken)).body).toEqual({ state: "refused" });
+  });
+
+  it("signs a phone in with an operator code as many times as it allows, and revoking signs those phones out", async () => {
+    const make = async (uses: number, expires = "1 day") => {
+      const code = newPairingCode();
+      await db.query("insert into pairing_codes (hash, uses_left, expires_at) values ($1, $2, now() + $3::interval)", [pairingCodeHash(code), uses, expires]);
+      return code;
+    };
+    const redeem = (code: string, deviceName = "Reviewer iPhone") => api("POST", "/api/phone/code", { code, deviceName }, nativeApp);
+    const twice = await make(2);
+    const first = await redeem(twice.toLowerCase().replaceAll("-", " "));
+    expect(first.status).toBe(200);
+    expect(first.headers["cache-control"]).toBe("no-store");
+    expect((await redeem(twice)).status).toBe(200);
+    const spent = await redeem(twice);
+    expect(spent.status).toBe(403);
+    expect(spent.body.error.code).toBe("code_invalid");
+    expect((await redeem(await make(1, "-1 second"))).status).toBe(403);
+    expect((await redeem(newPairingCode())).status).toBe(403);
+    // Concurrent uses of a code with one use left make one session.
+    const once = await make(1);
+    const raced = await Promise.all(Array.from({ length: 6 }, (_, i) => redeem(once, `Racer ${i}`)));
+    expect(raced.filter((r) => r.status === 200)).toHaveLength(1);
+    expect((await db.query("select count(*)::int as n from sessions where pairing_code_hash = $1", [pairingCodeHash(once)])).rows[0].n).toBe(1);
+    expect(await phoneSessionRow(first.body.token)).toMatchObject({ client: "phone", device_name: "Reviewer iPhone", fresh_until: null });
+    // The code never reaches the audit log.
+    const audit = await db.query<{ data: unknown }>("select data from audit_events where type = 'owner.signed_in' order by seq desc limit 3");
+    expect(JSON.stringify(audit.rows)).not.toContain(twice.replaceAll("-", ""));
+    expect(audit.rows[0]!.data).toMatchObject({ through: "code" });
+    // Revoking the codes (the operator's revoke-pairing-codes) signs out every phone that used one.
+    const operator = new Auth(db, controlConfig, new AuditLog(db, controlConfig.secrets.auditHmacKey), () => [AGENT]);
+    const revoked = await operator.revokePairingCodes();
+    expect(revoked.codes).toBeGreaterThan(0);
+    expect(revoked.sessions).toBe(3);
+    expect((await api("GET", "/api/me", undefined, { ...nativeApp, headers: bearer(first.body.token) })).status).toBe(401);
+    expect((await redeem(await make(1))).status).toBe(200);
+  });
 
   it("never opens the terminal for a phone token", async () => {
     const phone = await phoneSession();

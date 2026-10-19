@@ -10,6 +10,7 @@ import { agentSecrets, type ControlConfig } from "./config.js";
 import { createPool, migrate } from "./db.js";
 import { TaskEvents } from "./events.js";
 import { DesktopLinks } from "./desktop.js";
+import { PairingCodes } from "./pairing.js";
 import { Vault } from "./vault.js";
 import { Connectors } from "./connectors.js";
 import { EvidenceStore, FileBroker } from "./files.js";
@@ -33,7 +34,7 @@ export async function context(config: ControlConfig) {
   await slots.initialize();
   const agentIds = (): Promise<string[]> => slots.ids();
   const auth = new Auth(db, config, audit, agentIds);
-  return { db, audit, auth, agentIds, slots };
+  return { db, audit, auth, agentIds, slots, pairingCodes: new PairingCodes(db, audit, agentIds) };
 }
 
 export function clientsFor(config: ControlConfig): {
@@ -101,10 +102,12 @@ export async function startControl(config: ControlConfig, log: Logger, webRoot: 
   }
 
   const desktopLinks = new DesktopLinks(db, audit, config.appOrigin, agentIds);
+  const pairingCodes = new PairingCodes(db, audit, agentIds);
   const { app } = await buildServer({
     config,
     slots,
     desktopLinks,
+    pairingCodes,
     vault,
     connectors,
     db,

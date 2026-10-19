@@ -17,6 +17,9 @@ import {
   DesktopLinkDecideRequest,
   DesktopLinkPollRequest,
   DesktopLinkStartRequest,
+  PhoneCodeRequest,
+  PhoneLinkStartRequest,
+  PhonePasskeyVerifyRequest,
   DecideDomainRequest,
   type DomainRequestId,
   type DomainsView,
@@ -48,6 +51,7 @@ import type { SupervisorClient } from "./clients.js";
 import type { AgentHandles, ComputerService } from "./computer.js";
 import type { ControlConfig } from "./config.js";
 import type { DesktopLinks } from "./desktop.js";
+import type { PairingCodes } from "./pairing.js";
 import type { Vault } from "./vault.js";
 import type { Connectors } from "./connectors.js";
 import { ClaudeSignIns } from "./claude-sign-in.js";
@@ -63,6 +67,7 @@ export interface HttpDeps {
   config: ControlConfig;
   slots: AgentSlots;
   desktopLinks: DesktopLinks;
+  pairingCodes: PairingCodes;
   vault: Vault;
   connectors: Connectors;
   db: Db;
@@ -110,6 +115,10 @@ function uuidParam(value: unknown, what: string): string {
 }
 
 declare module "fastify" {
+  interface FastifyContextConfig {
+    // A phone sign-in route: it may be called without an Origin header (a native app has none) and reads no cookies.
+    phoneSignIn?: boolean;
+  }
   interface FastifyRequest {
     session: SessionInfo | null;
     releaseAgent: (() => void) | null;
@@ -118,7 +127,7 @@ declare module "fastify" {
 }
 
 export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstance; server: http.Server }> {
-  const { config, slots, db, auth, tasks, events, computer, policy, supervisor, handles, log, audit, desktopLinks, vault, connectors } = deps;
+  const { config, slots, db, auth, tasks, events, computer, policy, supervisor, handles, log, audit, desktopLinks, pairingCodes, vault, connectors } = deps;
   // Fastify ignores its serializers option when loggerInstance is supplied, so enforce it on the child logger.
   const requestLog = log.child({}, { serializers: { req: serializeRequest } });
   const app = Fastify({ loggerInstance: requestLog as never, trustProxy: true, bodyLimit: 1024 * 1024 }) as unknown as FastifyInstance;
@@ -229,11 +238,13 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
       });
       const method = request.method;
       if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-        // Every state change must come from the app's own pages, or from the phone app with its token in the
-        // Authorization header. A web page cannot send that header to this origin: the browser would ask first
-        // (a CORS preflight), and this server never allows it. An Origin, when sent, must be the app's own.
+        // Every state change must come from the app's own pages, or from the phone app: with its token in the
+        // Authorization header, or on a phone sign-in route, which reads no cookies. A web page cannot send that header
+        // to this origin: the browser would ask first (a CORS preflight), and this server never allows it. An Origin,
+        // when sent, must be the app's own.
         const origin = request.headers.origin;
-        if (origin === undefined ? !hasAuthorization(request) : origin !== config.appOrigin) {
+        const nativeClient = hasAuthorization(request) || request.routeOptions.config?.phoneSignIn === true;
+        if (origin === undefined ? !nativeClient : origin !== config.appOrigin) {
           await reply.status(403).send({ error: { code: "bad_origin", message: "Request refused: wrong origin." } });
           return reply;
         }
@@ -398,6 +409,7 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
     viewOrigin: config.viewOrigin,
     desktopDownloads: config.desktopRoot !== undefined,
     minDesktopVersion: MIN_DESKTOP_VERSION,
+    phoneApi: 1 as const,
   }));
   app.post("/api/desktop-link/start", signInRoute, async (request) => {
     const body = parse(DesktopLinkStartRequest, request.body);
@@ -436,11 +448,60 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   });
   app.post("/api/desktop-link/poll", appRoute, async (request, reply) => {
     const { pollToken } = parse(DesktopLinkPollRequest, request.body);
-    const outcome = await desktopLinks.poll(pollToken);
+    const outcome = await desktopLinks.poll(pollToken, "desktop");
     if (outcome.state === "approved" && outcome.kind === "signin") setSessionCookie(reply, outcome.sessionToken);
     if (outcome.state === "pending") void reply.status(202);
     if (outcome.state === "refused" || outcome.state === "expired") void reply.status(410);
     return { state: outcome.state };
+  });
+
+  // --- Phone app ----------------------------------------------------------------------------------------------------
+  // Three ways to sign the iPhone app in, each ending in a phone session whose token goes to the phone once, in the
+  // body (PhoneSessionResponse). The routes need no Origin, read no cookies and are never cached.
+
+  const phoneSignInRoute = { ...appRoute, config: { rateLimit: { max: 30, timeWindow: "1 minute" }, phoneSignIn: true } };
+  // The phone polls a link every two seconds, so the poll keeps the general allowance, like the desktop poll.
+  const phonePollRoute = { ...appRoute, config: { phoneSignIn: true } };
+  const noStore = (reply: FastifyReply): void => { void reply.header("cache-control", "no-store"); };
+
+  // A passkey: only builds that carry this domain in their entitlements (and in QB's appleAppIds) can make one.
+  app.post("/api/phone/passkey/options", phoneSignInRoute, async (_request, reply) => {
+    noStore(reply);
+    return auth.signinOptions("phone", null);
+  });
+  app.post("/api/phone/passkey/verify", phoneSignInRoute, async (request, reply) => {
+    const { challengeId, response, deviceName } = parse(PhonePasskeyVerifyRequest, request.body);
+    noStore(reply);
+    const token = await auth.signinVerify("phone", challengeId, response, null, null, deviceName);
+    if (!token) throw new HttpError(500, "internal", "No session was created.");
+    return { token };
+  });
+  // A link the owner approves in a browser where they are signed in, on this phone or another device.
+  app.post("/api/phone/link/start", phoneSignInRoute, async (request, reply) => {
+    const { deviceName } = parse(PhoneLinkStartRequest, request.body);
+    noStore(reply);
+    return desktopLinks.start("signin", deviceName, null, "phone");
+  });
+  app.post("/api/phone/link/poll", phonePollRoute, async (request, reply) => {
+    const { pollToken } = parse(DesktopLinkPollRequest, request.body);
+    noStore(reply);
+    const outcome = await desktopLinks.poll(pollToken, "phone");
+    if (outcome.state === "approved" && outcome.kind === "signin") return { state: "approved", token: outcome.sessionToken };
+    void reply.status(outcome.state === "pending" ? 202 : 410);
+    return { state: outcome.state === "approved" ? "expired" : outcome.state };
+  });
+  // A code printed by the server's operator (`pairing-code`).
+  app.post("/api/phone/code", phoneSignInRoute, async (request, reply) => {
+    const { code, deviceName } = parse(PhoneCodeRequest, request.body);
+    noStore(reply);
+    return { token: await pairingCodes.redeem(code, deviceName) };
+  });
+
+  // Lets the iPhone builds named in appleAppIds use native passkeys on this domain. Without the setting there is no
+  // file: no build may.
+  app.get("/.well-known/apple-app-site-association", appRoute, async (_request, reply) => {
+    if (config.appleAppIds.length === 0) throw new HttpError(404, "not_found", "No such file.");
+    return reply.type("application/json").header("cache-control", "public, max-age=3600").send({ webcredentials: { apps: config.appleAppIds } });
   });
 
   // --- Signed-in devices and activity -----------------------------------------------------------------------------

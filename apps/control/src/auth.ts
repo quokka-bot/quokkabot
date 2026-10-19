@@ -8,7 +8,7 @@ import {
 } from "@simplewebauthn/server";
 import type { AuditLog } from "./audit.js";
 import type { ControlConfig } from "./config.js";
-import { type Db, maybeOne, many, one, withTx } from "./db.js";
+import { type Db, type Tx, maybeOne, many, one, withTx } from "./db.js";
 import { HttpError } from "./errors.js";
 
 export const SESSION_COOKIE = "qb_session";
@@ -30,6 +30,22 @@ const VIEW_SESSION_HOURS = 12;
 
 export function newSecret(): string {
   return randomBytes(32).toString("base64url");
+}
+
+// How a phone signed in, for the audit log.
+export type PhoneSignInRoute = "passkey" | "link" | "code";
+
+// A new phone session; returns its token, which is stored nowhere. Every phone sign-in ends here. It is never fresh: a
+// phone cannot pass for a passkey check made a moment ago. A session made with an operator code remembers the code, so
+// revoking the codes signs those phones out too.
+export async function insertPhoneSession(q: Db | Tx, deviceName: string, pairingCodeHash: string | null = null): Promise<string> {
+  const token = newSecret();
+  await q.query(
+    `insert into sessions (hash, expires_at, absolute_expires_at, device_name, client, pairing_code_hash)
+     values ($1, now() + $2::interval, now() + $3::interval, $4, 'phone', $5)`,
+    [sha256Hex(token), `${PHONE_IDLE_DAYS} days`, `${PHONE_MAX_DAYS} days`, deviceName, pairingCodeHash],
+  );
+  return token;
 }
 
 // Which app a session belongs to. Browser and desktop sessions travel in the session cookie, phone sessions in an
@@ -109,13 +125,13 @@ export class Auth {
     const ticketHash = await this.requireTicket(ticket);
     const challenge = await this.takeChallenge(challengeId, "setup");
     if (challenge.ticket_hash !== ticketHash) throw new HttpError(403, "challenge_mismatch", "Start the setup again.");
-    const verification = await verifyRegistrationResponse({
+    const verification = await passkeyCheck(() => verifyRegistrationResponse({
       response: response as never,
       expectedChallenge: challenge.challenge,
       expectedOrigin: this.config.appOrigin,
       expectedRPID: this.rpId,
       requireUserVerification: true,
-    });
+    }));
     if (!verification.verified) throw new HttpError(403, "passkey_not_verified", "The passkey could not be verified.");
     const credential = verification.registrationInfo.credential;
     const userId = await this.webauthnUserId();
@@ -144,7 +160,7 @@ export class Auth {
     return sessionToken;
   }
 
-  async signinOptions(purpose: "signin" | "fresh" | "link", sessionHash: string | null, linkId: string | null = null): Promise<{ challengeId: string; options: unknown }> {
+  async signinOptions(purpose: "signin" | "fresh" | "link" | "phone", sessionHash: string | null, linkId: string | null = null): Promise<{ challengeId: string; options: unknown }> {
     const passkeys = await many<{ id: string; transports: string[] }>(this.db, "select id, transports from passkeys");
     if (passkeys.length === 0) throw new HttpError(409, "not_set_up", "No passkey is registered yet. Use the setup link from the server.");
     const options = await generateAuthenticationOptions({
@@ -160,13 +176,15 @@ export class Auth {
     return { challengeId, options };
   }
 
-  // Returns a new session token for "signin"; for "fresh" it marks the existing session fresh.
+  // Returns a new session token for "signin" (a browser) and "phone" (the iPhone app, named deviceName); for "fresh" it
+  // marks the existing session fresh.
   async signinVerify(
-    purpose: "signin" | "fresh" | "link",
+    purpose: "signin" | "fresh" | "link" | "phone",
     challengeId: string,
     response: unknown,
     sessionHash: string | null,
     linkId: string | null = null,
+    deviceName = "iPhone",
   ): Promise<string | null> {
     const challenge = await this.takeChallenge(challengeId, purpose);
     if ((purpose === "fresh" || purpose === "link") && challenge.session_hash !== sessionHash) {
@@ -181,7 +199,7 @@ export class Auth {
       [credentialId],
     );
     if (!passkey) throw new HttpError(403, "unknown_passkey", "This passkey is not registered here.");
-    const verification = await verifyAuthenticationResponse({
+    const verification = await passkeyCheck(() => verifyAuthenticationResponse({
       response: response as never,
       expectedChallenge: challenge.challenge,
       expectedOrigin: this.config.appOrigin,
@@ -193,7 +211,7 @@ export class Auth {
         transports: passkey.transports as never,
       },
       requireUserVerification: true,
-    });
+    }));
     if (!verification.verified) throw new HttpError(403, "passkey_not_verified", "The passkey could not be verified.");
     await this.db.query("update passkeys set counter = $2, last_used_at = now() where id = $1", [
       passkey.id,
@@ -206,6 +224,13 @@ export class Auth {
       for (const agentId of await this.auditAgentIds()) await this.audit.append(agentId, "owner", "owner.fresh_auth", {});
       return null;
     }
+    if (purpose === "phone") {
+      const phoneToken = await insertPhoneSession(this.db, deviceName);
+      for (const agentId of await this.auditAgentIds()) {
+        await this.audit.append(agentId, "owner", "owner.signed_in", { device: deviceName, through: "passkey" satisfies PhoneSignInRoute });
+      }
+      return phoneToken;
+    }
     const token = newSecret();
     await this.db.query(
       "insert into sessions (hash, expires_at, fresh_until) values ($1, now() + $2::interval, now() + $3::interval)",
@@ -217,7 +242,7 @@ export class Auth {
 
   private async takeChallenge(
     id: string,
-    purpose: "setup" | "signin" | "fresh" | "link",
+    purpose: "setup" | "signin" | "fresh" | "link" | "phone",
   ): Promise<{ challenge: string; ticket_hash: string | null; session_hash: string | null; link_id: string | null }> {
     if (!/^[0-9a-f-]{36}$/.test(id)) throw new HttpError(400, "invalid_challenge", "Start again.");
     const row = await maybeOne<{ challenge: string; ticket_hash: string | null; session_hash: string | null; link_id: string | null }>(
@@ -275,6 +300,15 @@ export class Auth {
 
   async signOut(hash: string): Promise<void> {
     await this.db.query("update sessions set revoked_at = now() where hash = $1", [hash]);
+  }
+
+  // Revokes every operator pairing code and signs out the phones that used one.
+  async revokePairingCodes(): Promise<{ codes: number; sessions: number }> {
+    return withTx(this.db, async (tx) => {
+      const codes = await tx.query("update pairing_codes set revoked_at = now() where revoked_at is null");
+      const sessions = await tx.query("update sessions set revoked_at = now() where pairing_code_hash is not null and revoked_at is null");
+      return { codes: codes.rowCount ?? 0, sessions: sessions.rowCount ?? 0 };
+    });
   }
 
   async revokeAllSessions(): Promise<void> {
@@ -350,6 +384,16 @@ export class Auth {
 
   private async requireAgent(agentId: string): Promise<void> {
     if (!(await this.auditAgentIds()).includes(agentId)) throw new HttpError(404, "unknown_agent", "No such agent.");
+  }
+}
+
+// The WebAuthn library throws on a response that does not match (another origin, challenge or relying party, no user
+// verification): that is a refused passkey, not a server error.
+async function passkeyCheck<T>(verify: () => Promise<T>): Promise<T> {
+  try {
+    return await verify();
+  } catch (error) {
+    throw new HttpError(403, "passkey_not_verified", `The passkey could not be verified: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

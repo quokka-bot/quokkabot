@@ -112,6 +112,24 @@ New setup link later:
 quokkabot-compose exec control node dist/main.js setup-link
 ```
 
+### The iPhone app
+
+The iPhone app connects to any server: in the app, Connect to your server, then scan the QR code in Settings,
+Connect a phone (or type the server's address), and approve the code it shows in a browser where you are signed in.
+On a server you never open in a browser, sign the phone in with a code instead:
+
+```sh
+quokkabot-compose exec control node dist/main.js pairing-code --uses 1 --days 1
+```
+
+In the app, choose "I have a code". A code works `--uses` times (at most 20) for `--days` days (at most 30).
+`revoke-pairing-codes` revokes every code and signs out the phones that used one. Settings, Signed-in devices signs
+out one phone.
+
+`QUOKKABOT_APPLE_APP_IDS` (optional, comma-separated `<team id>.<bundle id>`) lets those iPhone builds use native
+passkeys on this domain. A build can only use them on domains in its own entitlements, so this matters only when you
+build the app yourself for your domain.
+
 ## What it creates
 
 | Path | Contents |

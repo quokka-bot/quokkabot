@@ -36,6 +36,11 @@ describe("request logging", () => {
   });
 });
 
+it("redacts the one-time view ticket from the viewer's URL", () => {
+  expect(redactRequestUrl("/agents/6f1c1d2e-8f4b-4c55-9a59-0d7a7f6f3a10/?ticket=one-time-capability&Ticket=again"))
+    .toBe("/agents/6f1c1d2e-8f4b-4c55-9a59-0d7a7f6f3a10/?ticket=%5Bredacted%5D&Ticket=%5Bredacted%5D");
+});
+
 it("redacts uploaded image names from request URLs", () => {
   expect(redactRequestUrl("/api/agents/id/attachments?name=private-invoice.png")).toBe("/api/agents/id/attachments?name=%5Bredacted%5D");
 });

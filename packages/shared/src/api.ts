@@ -285,6 +285,8 @@ export const DesktopInfo = z.object({
   desktopDownloads: z.boolean(),
   // Older desktop builds than this must update before signing in.
   minDesktopVersion: z.string(),
+  // The phone app's routes below (/api/phone/...). Absent on servers older than the iPhone app.
+  phoneApi: z.literal(1).optional(),
 });
 export type DesktopInfo = z.infer<typeof DesktopInfo>;
 
@@ -306,6 +308,8 @@ export type DesktopLinkStartResponse = z.infer<typeof DesktopLinkStartResponse>;
 // GET /api/desktop-link/pending?code=<userCode> (signed in): what the browser shows before the owner approves.
 export const DesktopLinkPending = z.object({
   kind: z.enum(["signin", "fresh"]),
+  // Which app asked: the Mac app or the iPhone app (the phone uses the same links, see /api/phone/link/start).
+  client: z.enum(["desktop", "phone"]),
   deviceName: z.string(),
   createdAt: z.string(),
   expiresAt: z.string(),
@@ -326,6 +330,38 @@ export const DesktopLinkApproveVerifyRequest = z
 export const DesktopLinkPollRequest = z.object({ pollToken: z.string().min(32).max(100) }).strict();
 export const DesktopLinkPollResponse = z.object({ state: z.enum(["pending", "approved", "refused", "expired"]) });
 export type DesktopLinkPollResponse = z.infer<typeof DesktopLinkPollResponse>;
+
+// --- Phone app -----------------------------------------------------------------------------------------------------
+// The iPhone app keeps its session token in the Keychain and sends it as `Authorization: Bearer <token>`. It signs in
+// one of three ways: a passkey (only on servers built into the app, since native passkeys need the app's associated
+// domain), a link the owner approves in a browser where they are signed in, or a code from the server's operator.
+// These routes need no Origin header and read no cookies.
+
+export const PhoneDeviceName = z.string().trim().min(1).max(80);
+// Every phone sign-in answers with the new session's token, once.
+export const PhoneSessionResponse = z.object({ token: z.string().min(32).max(100) });
+export type PhoneSessionResponse = z.infer<typeof PhoneSessionResponse>;
+
+// POST /api/phone/passkey/options: WebAuthn request options and the id of their challenge (the phone has no cookies).
+export const PhonePasskeyOptionsResponse = z.object({ challengeId: z.uuid(), options: z.record(z.string(), z.unknown()) });
+export type PhonePasskeyOptionsResponse = z.infer<typeof PhonePasskeyOptionsResponse>;
+// POST /api/phone/passkey/verify: answers PhoneSessionResponse.
+export const PhonePasskeyVerifyRequest = z.object({ challengeId: z.uuid(), response: z.unknown(), deviceName: PhoneDeviceName }).strict();
+
+// POST /api/phone/link/start: answers DesktopLinkStartResponse; the owner approves at its verifyUrl.
+export const PhoneLinkStartRequest = z.object({ deviceName: PhoneDeviceName }).strict();
+// POST /api/phone/link/poll {pollToken}: 200 approved with the token, 202 pending, 410 refused or expired.
+export const PhoneLinkPollResponse = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("approved"), token: z.string().min(32).max(100) }),
+  z.object({ state: z.enum(["pending", "refused", "expired"]) }),
+]);
+export type PhoneLinkPollResponse = z.infer<typeof PhoneLinkPollResponse>;
+
+// A code printed on the server by `pairing-code`: twelve characters from the link code alphabet, shown as XXXX-XXXX-XXXX.
+// Spaces, dashes and lower case are accepted.
+export const PairingCode = z.string().max(40).transform((value) => value.toUpperCase().replace(/[\s-]/g, "")).pipe(z.string().regex(/^[A-HJKMNP-Z2-9]{12}$/));
+// POST /api/phone/code: answers PhoneSessionResponse.
+export const PhoneCodeRequest = z.object({ code: PairingCode, deviceName: PhoneDeviceName }).strict();
 
 // GET /api/sessions and DELETE /api/sessions/:id: the owner's signed-in devices.
 export const SessionView = z.object({
