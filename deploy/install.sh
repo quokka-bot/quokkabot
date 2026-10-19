@@ -813,7 +813,7 @@ start_stack() {
     compose up --detach --no-deps --force-recreate --wait --wait-timeout 180 "${recreate[@]}" 2>&1 | sed 's/^/    /'
   fi
   for service in ${restart[@]+"${restart[@]}"}; do
-    [[ " ${recreate[*]} " != *" $service "* ]] || continue
+    [[ " ${recreate[*]+"${recreate[*]}"} " != *" $service "* ]] || continue
     note "restarting $service for its changed configuration"
     compose restart "$service" >/dev/null
   done
