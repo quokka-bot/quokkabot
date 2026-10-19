@@ -12,6 +12,7 @@ it("names the AI provider, keeps the Google Limited Use statement and links to t
   expect(page).toContain('href="https://quokkabot.com/privacy"');
   expect(page).not.toContain("stay on this server");
   // Gmail text the agent reads is kept with the task (its activity), so the page must not say it goes only to the model.
+  expect(page).toContain("The first 300 characters of each Gmail result");
   expect(page).toContain("saved with the task on this server and in the encrypted backups");
   expect(page).not.toContain("goes only to the AI model");
 });
