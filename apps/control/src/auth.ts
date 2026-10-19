@@ -18,6 +18,10 @@ export const CHALLENGE_COOKIE = "qb_challenge";
 // A signed, database-free capability for the kill switch only: stopping the agent must work while PostgreSQL is down.
 export const KILL_COOKIE = "qb_kill";
 const SESSION_DAYS = 30;
+// A phone session stays signed in while it is used: it expires 30 days after its last use, and 180 days after it was
+// created at the latest, so a copied token cannot be kept alive forever.
+const PHONE_IDLE_DAYS = 30;
+export const PHONE_MAX_DAYS = 180;
 const FRESH_MINUTES = 5;
 const CHALLENGE_MINUTES = 5;
 const SETUP_TICKET_MINUTES = 30;
@@ -28,9 +32,15 @@ export function newSecret(): string {
   return randomBytes(32).toString("base64url");
 }
 
+// Which app a session belongs to. Browser and desktop sessions travel in the session cookie, phone sessions in an
+// Authorization header, and each is accepted only the way it travels.
+export type SessionClient = "browser" | "desktop" | "phone";
+export type SessionTransport = "cookie" | "bearer";
+
 export interface SessionInfo {
   hash: string;
   freshUntil: Date | null;
+  client: SessionClient;
 }
 
 export class Auth {
@@ -219,27 +229,33 @@ export class Auth {
     return row;
   }
 
-  async session(token: string | undefined): Promise<SessionInfo | null> {
+  async session(token: string | undefined, transport: SessionTransport): Promise<SessionInfo | null> {
     if (!token || token.length > 100) return null;
     const hash = sha256Hex(token);
-    // Also records when the device was last seen (at most every five minutes), for the signed-in devices list.
-    const row = await maybeOne<{ hash: string; fresh_until: Date | null }>(
+    // Also records when the device was last seen (at most every five minutes), for the signed-in devices list, and
+    // moves a phone session's expiry forward (at most once a day, never past its absolute end).
+    const row = await maybeOne<{ hash: string; fresh_until: Date | null; client: SessionClient }>(
       this.db,
-      `update sessions set last_seen_at = case when last_seen_at is null or last_seen_at < now() - interval '5 minutes' then now() else last_seen_at end
-       where hash = $1 and expires_at > now() and revoked_at is null returning hash, fresh_until`,
-      [hash],
+      `update sessions set
+         last_seen_at = case when last_seen_at is null or last_seen_at < now() - interval '5 minutes' then now() else last_seen_at end,
+         expires_at = case when client = 'phone' and expires_at < now() + $3::interval - interval '1 day'
+           then least(absolute_expires_at, now() + $3::interval) else expires_at end
+       where hash = $1 and expires_at > now() and revoked_at is null and (client = 'phone') = $2
+       returning hash, fresh_until, client`,
+      [hash, transport === "bearer", `${PHONE_IDLE_DAYS} days`],
     );
-    return row ? { hash: row.hash, freshUntil: row.fresh_until } : null;
+    return row ? { hash: row.hash, freshUntil: row.fresh_until, client: row.client } : null;
   }
 
-  async devices(currentHash: string): Promise<{ id: string; deviceName: string; createdAt: string; lastSeenAt: string | null; current: boolean }[]> {
-    const rows = await many<{ hash: string; device_name: string; created_at: Date; last_seen_at: Date | null }>(
+  async devices(currentHash: string): Promise<{ id: string; deviceName: string; client: SessionClient; createdAt: string; lastSeenAt: string | null; current: boolean }[]> {
+    const rows = await many<{ hash: string; device_name: string; client: SessionClient; created_at: Date; last_seen_at: Date | null }>(
       this.db,
-      "select hash, device_name, created_at, last_seen_at from sessions where expires_at > now() and revoked_at is null order by coalesce(last_seen_at, created_at) desc",
+      "select hash, device_name, client, created_at, last_seen_at from sessions where expires_at > now() and revoked_at is null order by coalesce(last_seen_at, created_at) desc",
     );
     return rows.map((r) => ({
       id: r.hash.slice(0, 16),
       deviceName: r.device_name,
+      client: r.client,
       createdAt: r.created_at.toISOString(),
       lastSeenAt: r.last_seen_at?.toISOString() ?? null,
       current: r.hash === currentHash,
@@ -320,6 +336,11 @@ export class Auth {
       [sha256Hex(token), agentId],
     );
     return row?.session_hash ?? null;
+  }
+
+  // Whether a viewer cookie still holds: an open viewer socket ends when its 12 hours are up, like a new one would.
+  async viewSessionAlive(token: string, agentId: string): Promise<boolean> {
+    return (await this.viewSession(token, agentId)) !== null;
   }
 
   async sessionAlive(hash: string): Promise<boolean> {

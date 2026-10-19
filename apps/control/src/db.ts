@@ -531,6 +531,18 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: 17,
+    sql: () => `
+      -- Which app a session belongs to. Browser and desktop sessions travel in the session cookie, phone sessions in
+      -- an Authorization header. Desktop sessions are the ones a desktop link named; passkey sign-ins kept 'Browser'.
+      alter table sessions add column client text not null default 'browser' check (client in ('browser', 'desktop', 'phone'));
+      update sessions set client = 'desktop' where device_name <> 'Browser';
+      -- A phone session's expiry moves forward with use, never past this.
+      alter table sessions add column absolute_expires_at timestamptz;
+      alter table sessions add constraint sessions_phone_absolute_check check (client <> 'phone' or absolute_expires_at is not null);
+    `,
+  },
 ];
 
 export async function migrate(config: ControlConfig): Promise<void> {

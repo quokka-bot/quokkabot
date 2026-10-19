@@ -331,6 +331,8 @@ export type DesktopLinkPollResponse = z.infer<typeof DesktopLinkPollResponse>;
 export const SessionView = z.object({
   id: z.string(),
   deviceName: z.string(),
+  // The web app, the Mac app or the iPhone app.
+  client: z.enum(["browser", "desktop", "phone"]),
   createdAt: z.string(),
   lastSeenAt: z.string().nullable(),
   current: z.boolean(),

@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { Effort, type AgentSummary } from "@quokkabot/shared";
+import { Effort, type AgentSummary, type SessionView } from "@quokkabot/shared";
 import { api } from "./api.js";
 import { RemoveAgent } from "./agent-dialog.js";
 import { dateLabel, ErrorLine, useAction, usePollInterval } from "./ui.js";
+
+const CLIENT_LABELS: Record<SessionView["client"], string> = { browser: "Web app", desktop: "Mac app", phone: "iPhone app" };
 
 export function Devices() {
   const client = useQueryClient();
@@ -20,7 +22,7 @@ export function Devices() {
     {devices.isPending && <p role="status">Loading devices…</p>}
     <ul className="device-list">{devices.data?.sessions.map(device => <li key={device.id} className="domain-row"><div>
       <strong>{device.deviceName}</strong>{device.current && <span className="badge">This device</span>}
-      <p className="meta">Last seen: {device.lastSeenAt ? dateLabel(device.lastSeenAt) : "Never"}</p>
+      <p className="meta">{CLIENT_LABELS[device.client]} · Last seen: {device.lastSeenAt ? dateLabel(device.lastSeenAt) : "Never"}</p>
     </div><button disabled={signOut.isPending} onClick={() => signOut.mutate(device)}>Sign out {device.deviceName}</button></li>)}</ul>
     {devices.data?.sessions.length === 0 && <p>No signed-in devices.</p>}
     <ErrorLine error={signOut.error} />
