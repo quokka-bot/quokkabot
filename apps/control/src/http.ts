@@ -95,6 +95,15 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data;
 }
 
+// Whether a request or upgrade sends an Authorization header at all; when it does, it must be a phone's bearer token.
+function hasAuthorization(request: { headers: http.IncomingHttpHeaders }): boolean {
+  return request.headers.authorization !== undefined;
+}
+// The token of an `Authorization: Bearer <token>` header; anything else is no token, so the request is signed out.
+function bearerToken(request: { headers: http.IncomingHttpHeaders }): string | undefined {
+  return /^Bearer ([A-Za-z0-9_-]{20,100})$/.exec(request.headers.authorization ?? "")?.[1];
+}
+
 function uuidParam(value: unknown, what: string): string {
   if (typeof value !== "string" || !UUID_RE.test(value)) throw new HttpError(404, `unknown_${what}`, `No such ${what}.`);
   return value;
@@ -114,6 +123,16 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   const requestLog = log.child({}, { serializers: { req: serializeRequest } });
   const app = Fastify({ loggerInstance: requestLog as never, trustProxy: true, bodyLimit: 1024 * 1024 }) as unknown as FastifyInstance;
   void app.register(cookie);
+  // Requests per client address (Caddy passes it on). Every route has a ceiling; the routes that work without a
+  // session (setup, sign-in, desktop link, OAuth callback) have a tight one.
+  // Awaited and first: the plugin attaches its limit to each route as the route is added, so it is loaded before any
+  // route or hook. Each route checks its limit in onRequest, before the preHandler hook below reads a session.
+  await app.register(rateLimit, {
+    global: true,
+    max: 1200,
+    timeWindow: "1 minute",
+    errorResponseBuilder: (_request, context) => new HttpError(429, "rate_limited", `Too many requests. Try again in ${context.after}.`),
+  });
   app.decorateRequest("session", null);
   app.addContentTypeParser(ImageMediaType.options, { parseAs: "buffer" }, (_request, body, done) => done(null, body));
   app.decorateRequest("releaseAgent", null);
@@ -210,8 +229,11 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
       });
       const method = request.method;
       if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-        // Every state change must come from the app's own pages.
-        if (request.headers.origin !== config.appOrigin) {
+        // Every state change must come from the app's own pages, or from the phone app with its token in the
+        // Authorization header. A web page cannot send that header to this origin: the browser would ask first
+        // (a CORS preflight), and this server never allows it. An Origin, when sent, must be the app's own.
+        const origin = request.headers.origin;
+        if (origin === undefined ? !hasAuthorization(request) : origin !== config.appOrigin) {
           await reply.status(403).send({ error: { code: "bad_origin", message: "Request refused: wrong origin." } });
           return reply;
         }
@@ -221,23 +243,23 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   });
 
   const appRoute = { constraints: { host: config.appHost } };
-  // Requests per client address (Caddy passes it on). Every route has a ceiling; the routes that work without a
-  // session (setup, sign-in, desktop link, OAuth callback) have a tight one.
-  // Awaited: the plugin attaches its limits to routes as they are added, so it must be loaded before any route.
-  await app.register(rateLimit, {
-    global: true,
-    max: 1200,
-    timeWindow: "1 minute",
-    errorResponseBuilder: (_request, context) => new HttpError(429, "rate_limited", `Too many requests. Try again in ${context.after}.`),
-  });
   const signInRoute = { ...appRoute, config: { rateLimit: { max: 30, timeWindow: "1 minute" } } };
   const viewRoute = { constraints: { host: config.viewHost } };
 
+  // A request carries one credential. With an Authorization header (the phone app), its bearer token is the only
+  // one: every cookie is ignored, the session and kill cookies included. Without it, the session cookie (the web and
+  // Mac apps). Each kind of session is accepted only the way it travels (Auth.session).
   async function requireSession(request: FastifyRequest): Promise<SessionInfo> {
-    const session = await auth.session(request.cookies[SESSION_COOKIE]);
+    const session = hasAuthorization(request)
+      ? await auth.session(bearerToken(request), "bearer")
+      : await auth.session(request.cookies[SESSION_COOKIE], "cookie");
     if (!session) throw new HttpError(401, "signed_out", "Sign in.");
     request.session = session;
     return session;
+  }
+  // The owner's cookies on the app host, or none when the request authenticates with a bearer token.
+  function ownerCookie(request: FastifyRequest, name: string): string | undefined {
+    return hasAuthorization(request) ? undefined : request.cookies[name];
   }
 
   function setSessionCookie(reply: FastifyReply, token: string): void {
@@ -253,9 +275,12 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
 
   // Live terminal and viewer connections, by the owner session that opened them. A revoked or expired session closes
   // its connections; the viewer sockets also tell whether the owner can still see a takeover.
-  const relays = new Map<string, Set<{ agentId: string; kind: "terminal" | "viewer" | "stream"; close: () => void }>>();
-  function track(sessionHash: string, agentId: string, kind: "terminal" | "viewer" | "stream", close: () => void): () => void {
-    const entry = { agentId, kind, close };
+  // An entry may carry its own check besides the owner session (a viewer's 12-hour cookie); the sweep closes it when
+  // either fails. The checks only read: an open connection never extends a session.
+  type Relay = { agentId: string; kind: "terminal" | "viewer" | "stream"; close: () => void; alive?: (() => Promise<boolean>) | undefined };
+  const relays = new Map<string, Set<Relay>>();
+  function track(sessionHash: string, agentId: string, kind: Relay["kind"], close: () => void, alive?: () => Promise<boolean>): () => void {
+    const entry: Relay = { agentId, kind, close, alive };
     const set = relays.get(sessionHash) ?? new Set();
     set.add(entry);
     relays.set(sessionHash, set);
@@ -294,8 +319,11 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   }
   const relaySweep = setInterval(() => {
     for (const hash of [...relays.keys()]) {
-      void auth.sessionAlive(hash).then((alive) => {
-        if (!alive) closeSession(hash);
+      void auth.sessionAlive(hash).then(async (alive) => {
+        if (!alive) return closeSession(hash);
+        for (const entry of [...(relays.get(hash) ?? [])]) {
+          if (entry.alive && !(await entry.alive())) entry.close();
+        }
       }).catch(() => undefined);
     }
   }, 15_000);
@@ -315,7 +343,7 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   });
   app.post("/api/setup/verify", signInRoute, async (request, reply) => {
     const { ticket, response } = parse(SetupVerifyRequest, request.body);
-    const token = await auth.setupVerify(ticket, request.cookies[CHALLENGE_COOKIE] ?? "", response);
+    const token = await auth.setupVerify(ticket, ownerCookie(request, CHALLENGE_COOKIE) ?? "", response);
     setSessionCookie(reply, token);
     return me();
   });
@@ -326,7 +354,7 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   });
   app.post("/api/auth/verify", signInRoute, async (request, reply) => {
     const { response } = parse(AuthVerifyRequest, request.body);
-    const token = await auth.signinVerify("signin", request.cookies[CHALLENGE_COOKIE] ?? "", response, null);
+    const token = await auth.signinVerify("signin", ownerCookie(request, CHALLENGE_COOKIE) ?? "", response, null);
     if (token) setSessionCookie(reply, token);
     return me();
   });
@@ -339,9 +367,9 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   app.post("/api/auth/fresh/verify", signInRoute, async (request) => {
     const session = await requireSession(request);
     const { response } = parse(AuthVerifyRequest, request.body);
-    await auth.signinVerify("fresh", request.cookies[CHALLENGE_COOKIE] ?? "", response, session.hash);
-    const refreshed = await auth.session(request.cookies[SESSION_COOKIE]);
-    return { freshUntil: refreshed?.freshUntil?.toISOString() ?? null };
+    await auth.signinVerify("fresh", ownerCookie(request, CHALLENGE_COOKIE) ?? "", response, session.hash);
+    const refreshed = await requireSession(request);
+    return { freshUntil: refreshed.freshUntil?.toISOString() ?? null };
   });
   app.post("/api/auth/logout", appRoute, async (request, reply) => {
     const session = await requireSession(request);
@@ -374,6 +402,8 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   app.post("/api/desktop-link/start", signInRoute, async (request) => {
     const body = parse(DesktopLinkStartRequest, request.body);
     const requester = body.kind === "fresh" ? await requireSession(request) : null;
+    // The re-check through the browser is for the Mac app. A phone session never becomes fresh.
+    if (requester?.client === "phone") throw new HttpError(403, "phone_not_fresh", "Confirm this in the web app or the Mac app.");
     return desktopLinks.start(body.kind, body.deviceName, requester?.hash ?? null);
   });
   app.get<{ Querystring: { code?: string } }>("/api/desktop-link/pending", appRoute, async (request) => {
@@ -394,7 +424,7 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
     const session = await requireSession(request);
     const { userCode, response } = parse(DesktopLinkApproveVerifyRequest, request.body);
     const linkId = await desktopLinks.linkId(userCode);
-    await auth.signinVerify("link", request.cookies[CHALLENGE_COOKIE] ?? "", response, session.hash, linkId);
+    await auth.signinVerify("link", ownerCookie(request, CHALLENGE_COOKIE) ?? "", response, session.hash, linkId);
     await desktopLinks.approve(userCode, linkId);
     return {};
   });
@@ -465,7 +495,7 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   // Every agent's kill switch at once (desktop menu, tray and shortcut). Like the single kill route it accepts the signed
   // kill capability without the database, and it reports per agent whether network and sandboxes were stopped.
   app.post("/api/agents/kill-all", appRoute, async (request) => {
-    if (!killCapabilityValid(config.secrets.sessionSecret, request.cookies[KILL_COOKIE])) await requireSession(request);
+    if (!killCapabilityValid(config.secrets.sessionSecret, ownerCookie(request, KILL_COOKIE))) await requireSession(request);
     const agents = await Promise.all(
       [...slots.knownIds].map(async (agentId) => {
         const { errors } = await computer.kill(agentId);
@@ -599,7 +629,7 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
   app.post<{ Params: { agentId: string } }>("/api/agents/:agentId/kill", appRoute, async (request, reply) => {
     const agentId = uuidParam(request.params.agentId, "agent");
     if (!slots.knownIds.has(agentId)) throw new HttpError(404, "unknown_agent", "No such agent.");
-    if (!killCapabilityValid(config.secrets.sessionSecret, request.cookies[KILL_COOKIE])) await requireSession(request);
+    if (!killCapabilityValid(config.secrets.sessionSecret, ownerCookie(request, KILL_COOKIE))) await requireSession(request);
     const { errors } = await computer.kill(agentId);
     if (errors.length > 0) {
       log.error({ errors }, "kill switch had errors");
@@ -1137,12 +1167,13 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
     const cookies = parseCookies(req.headers.cookie ?? "");
     if (host === config.appHost) {
       const match = /^\/api\/agents\/([0-9a-f-]{36})\/terminal$/.exec(url.pathname);
-      if (!match?.[1] || req.headers.origin !== config.appOrigin) throw new HttpError(403, "refused", "refused");
+      // The terminal is for the web and Mac apps: their session cookie, never a phone's bearer token.
+      if (!match?.[1] || req.headers.origin !== config.appOrigin || hasAuthorization(req)) throw new HttpError(403, "refused", "refused");
       const agentId = await agentParam(match[1]);
       const release = await slots.acquire(agentId);
       try {
         await slots.require(agentId, false);
-        const session = await auth.session(cookies[SESSION_COOKIE]);
+        const session = await auth.session(cookies[SESSION_COOKIE], "cookie");
         if (!session) throw new HttpError(401, "signed_out", "signed out");
         if (!isFresh(session)) throw new HttpError(403, "fresh_auth_required", "fresh auth required");
         const running = await maybeOne(db, "select 1 from runs where agent_id = $1 and state in ('starting','running') limit 1", [agentId]);
@@ -1160,11 +1191,12 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
       if (!match?.[1] || req.headers.origin !== config.viewOrigin) throw new HttpError(403, "refused", "refused");
       const agentId = await agentParam(match[1]);
       await slots.require(agentId, false);
-      const sessionHash = await auth.viewSession(cookies[VIEW_COOKIE], agentId);
-      if (sessionHash === null) throw new HttpError(403, "refused", "refused");
+      const viewToken = cookies[VIEW_COOKIE];
+      const sessionHash = await auth.viewSession(viewToken, agentId);
+      if (sessionHash === null || viewToken === undefined) throw new HttpError(403, "refused", "refused");
       const ownerToken = await maybeOne<{ selkies_owner_token: string | null }>(db, "select selkies_owner_token from agents where id = $1", [agentId]);
       if (!ownerToken?.selkies_owner_token) throw new HttpError(409, "not_started", "computer not started");
-      const untrack = track(sessionHash, agentId, "viewer", () => socket.destroy());
+      const untrack = track(sessionHash, agentId, "viewer", () => socket.destroy(), () => auth.viewSessionAlive(viewToken, agentId));
       socket.once("close", untrack);
       pipeViewerSocket(req, socket, head, agentId, ownerToken.selkies_owner_token);
       return;

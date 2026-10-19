@@ -22,7 +22,7 @@ let clients: QueryClient[];
 let handler: (path: string, init: RequestInit | undefined) => Response | undefined;
 const fetchMock = vi.fn<typeof fetch>();
 let logins: LoginView[];
-let devices: { id: string; deviceName: string; current: boolean; createdAt: string; lastSeenAt: string | null }[];
+let devices: { id: string; deviceName: string; client: "browser" | "desktop" | "phone"; current: boolean; createdAt: string; lastSeenAt: string | null }[];
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -63,7 +63,7 @@ function change(label: string | RegExp, value: string) { fireEvent.change(screen
 
 beforeEach(() => {
   clients = []; logins = [savedLogin];
-  devices = [{ id: "this", deviceName: "This Mac", current: true, createdAt: at, lastSeenAt: at }, { id: "other", deviceName: "Other Mac", current: false, createdAt: at, lastSeenAt: null }];
+  devices = [{ id: "this", deviceName: "This Mac", client: "desktop", current: true, createdAt: at, lastSeenAt: at }, { id: "other", deviceName: "Other Mac", client: "desktop", current: false, createdAt: at, lastSeenAt: null }];
   handler = () => undefined;
   localStorage.clear(); sessionStorage.clear(); window.history.replaceState({}, "", "/");
   vi.stubGlobal("EventSource", class { close() {} });
@@ -238,7 +238,7 @@ describe("browser desktop-link page", () => {
 describe("settings and native navigation", () => {
   it("lists devices, last seen and current marker, and revokes another device", async () => {
     mount("/settings"); await screen.findByText("Other Mac");
-    expect(screen.getByText("This device")).toBeTruthy(); expect(screen.getByText("Last seen: Never")).toBeTruthy();
+    expect(screen.getByText("This device")).toBeTruthy(); expect(screen.getByText("Mac app · Last seen: Never")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Sign out Other Mac" }));
     await waitFor(() => expect(screen.queryByText("Other Mac")).toBeNull());
     expect(fetchMock.mock.calls.some(([path, init]) => path === "/api/sessions/other" && init?.method === "DELETE")).toBe(true);

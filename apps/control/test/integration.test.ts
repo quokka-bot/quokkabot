@@ -2,7 +2,7 @@
 // service and Selkies. The test plays the CLI: it calls the MCP endpoint with the run's token, then feeds the run's
 // stream-json output through the fake supervisor. Runs only with QB_INTEGRATION=1 (needs Docker).
 import { execFileSync } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
@@ -13,6 +13,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import pg from "pg";
 import pino from "pino";
+import { WebSocket } from "ws";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type ControlHandles, startControl } from "../src/app.js";
 import { killCapability } from "../src/auth.js";
@@ -245,6 +246,11 @@ describe.skipIf(!enabled)("control plane end to end", () => {
         return json(res, 200, {});
       })();
     });
+    // The live view: answers the upgrade and keeps the socket open, as Selkies does while a viewer watches.
+    selkies.on("upgrade", (req, socket) => {
+      const accept = createHash("sha1").update(`${String(req.headers["sec-websocket-key"])}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+      socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+    });
     const selkiesPort = await listen(selkies, 0);
 
     appPort = 20000 + Math.floor(Math.random() * 20000);
@@ -296,8 +302,8 @@ describe.skipIf(!enabled)("control plane end to end", () => {
   });
 
   // node:http, not fetch: fetch drops a custom Host header, and the server routes by Host.
-  function api(method: string, path: string, payload?: unknown, opts: { origin?: string | null; cookie?: boolean; extraCookie?: string; response?: "text"; headers?: Record<string, string> } = {}): Promise<{ status: number; body: any; setCookie: string[] }> {
-    const headers: Record<string, string> = { host: `localhost:${appPort}`, ...opts.headers };
+  function api(method: string, path: string, payload?: unknown, opts: { origin?: string | null; cookie?: boolean; extraCookie?: string; response?: "text"; headers?: Record<string, string>; host?: string } = {}): Promise<{ status: number; body: any; setCookie: string[] }> {
+    const headers: Record<string, string> = { host: opts.host ?? `localhost:${appPort}`, ...opts.headers };
     const cookies = [opts.cookie !== false ? `qb_session=${sessionToken}` : "", opts.extraCookie ?? ""].filter(Boolean);
     if (cookies.length > 0) headers.cookie = cookies.join("; ");
     const origin = opts.origin === undefined ? `http://localhost:${appPort}` : opts.origin;
@@ -1008,7 +1014,7 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     // Collected once only.
     expect((await api("POST", "/api/desktop-link/poll", { pollToken }, { cookie: false })).status).toBe(410);
     const devices = await api("GET", "/api/sessions");
-    expect(devices.body.sessions.map((d: { deviceName: string }) => d.deviceName)).toContain("Test Mac");
+    expect(devices.body.sessions).toContainEqual(expect.objectContaining({ deviceName: "Test Mac", client: "desktop" }));
 
     // Fresh re-check for the desktop session through the browser.
     await db.query("update sessions set fresh_until = null where hash = $1", [sha256Hex(desktopToken)]);
@@ -1268,6 +1274,145 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     expect((await api("GET", `/api/agents/${AGENT2}/audit/verify`)).body).toMatchObject({ ok: true });
     expect((await api("DELETE", `/api/agents/${AGENT2}`)).status).toBe(200);
   });
+
+  // A phone's session, as the phone sign-in routes create it.
+  async function phoneSession(opts: { expires?: string; absolute?: string; name?: string } = {}): Promise<{ token: string; id: string }> {
+    const token = secret();
+    await db.query(
+      `insert into sessions (hash, expires_at, absolute_expires_at, device_name, client)
+       values ($1, now() + $2::interval, now() + $3::interval, $4, 'phone')`,
+      [sha256Hex(token), opts.expires ?? "30 days", opts.absolute ?? "180 days", opts.name ?? "Test iPhone"],
+    );
+    return { token, id: sha256Hex(token).slice(0, 16) };
+  }
+  const bearer = (token: string): Record<string, string> => ({ authorization: `Bearer ${token}` });
+
+  it("accepts a phone's bearer token without an Origin and only that way", async () => {
+    const phone = await phoneSession();
+    const asPhone = { cookie: false, origin: null, headers: bearer(phone.token) } as const;
+    expect((await api("GET", "/api/agents", undefined, asPhone)).status).toBe(200);
+    expect((await api("POST", `/api/agents/${AGENT}/view-ticket`, {}, asPhone)).status).toBe(200);
+    // An Origin, when sent, must still be the app's own.
+    expect((await api("POST", `/api/agents/${AGENT}/view-ticket`, {}, { ...asPhone, origin: "https://evil.example" })).status).toBe(403);
+    expect((await api("POST", `/api/agents/${AGENT}/view-ticket`, {}, { ...asPhone, origin: `http://localhost:${appPort}` })).status).toBe(200);
+    // A cookie request without an Origin is still refused.
+    expect((await api("POST", `/api/agents/${AGENT}/view-ticket`, {}, { origin: null })).status).toBe(403);
+    // A phone token in the cookie is not a session, and a browser's cookie token is not a bearer token.
+    expect((await api("GET", "/api/agents", undefined, { cookie: false, extraCookie: `qb_session=${phone.token}` })).status).toBe(401);
+    expect((await api("GET", "/api/agents", undefined, { cookie: false, headers: bearer(sessionToken) })).status).toBe(401);
+    // With an Authorization header the cookies are ignored: a broken header is signed out even with a valid cookie.
+    for (const authorization of ["Basic b3duZXI6cGFzcw==", "Bearer", `Bearer ${phone.token} extra`, `bearer ${phone.token}`]) {
+      expect((await api("GET", "/api/agents", undefined, { headers: { authorization } })).status).toBe(401);
+    }
+    // The kill capability cookie is ignored next to an Authorization header, so it cannot ride along a bad token.
+    const killed = await api("POST", `/api/agents/${AGENT}/kill`, {}, { cookie: false, origin: null, headers: bearer("not-a-session-token-at-all"), extraCookie: `qb_kill=${killCapability(killSecret, 1)}` });
+    expect(killed.status).toBe(401);
+    expect(supervisorCalls).not.toContain(`POST /v1/agents/${AGENT}/computer/kill`);
+    // A phone session never counts as a fresh passkey check: it cannot start the browser re-check, and a fresh_until on
+    // its row is ignored.
+    expect((await api("POST", `/api/agents/${AGENT}/kill/release`, {}, asPhone)).body.error.code).toBe("fresh_auth_required");
+    const recheck = await api("POST", "/api/desktop-link/start", { kind: "fresh", deviceName: "Test Mac" }, asPhone);
+    expect(recheck.status).toBe(403);
+    expect(recheck.body.error.code).toBe("phone_not_fresh");
+    await db.query("update sessions set fresh_until = now() + interval '10 minutes' where hash = $1", [sha256Hex(phone.token)]);
+    expect((await api("POST", `/api/agents/${AGENT}/kill/release`, {}, asPhone)).body.error.code).toBe("fresh_auth_required");
+    expect((await api("GET", "/api/me", undefined, asPhone)).body.freshUntil).toBeNull();
+    const devices = await api("GET", "/api/sessions");
+    expect(devices.body.sessions).toContainEqual(expect.objectContaining({ id: phone.id, deviceName: "Test iPhone", client: "phone", current: false }));
+  });
+
+  it("keeps a phone signed in while it is used, up to its absolute end, and never a browser", async () => {
+    const used = await phoneSession({ expires: "2 days" });
+    expect((await api("GET", "/api/me", undefined, { cookie: false, headers: bearer(used.token) })).status).toBe(200);
+    const slid = await db.query<{ days: number }>("select (extract(epoch from expires_at - now()) / 86400)::float8 as days from sessions where hash = $1", [sha256Hex(used.token)]);
+    expect(slid.rows[0]!.days).toBeGreaterThan(29.9);
+    // Used again within a day of the last renewal: still 30 days from this use.
+    const recent = await phoneSession({ expires: "29 days 12 hours" });
+    await api("GET", "/api/me", undefined, { cookie: false, headers: bearer(recent.token) });
+    const recentDays = await db.query<{ days: number }>("select (extract(epoch from expires_at - now()) / 86400)::float8 as days from sessions where hash = $1", [sha256Hex(recent.token)]);
+    expect(recentDays.rows[0]!.days).toBeGreaterThan(29.99);
+    const capped = await phoneSession({ expires: "2 days", absolute: "3 days" });
+    await api("GET", "/api/me", undefined, { cookie: false, headers: bearer(capped.token) });
+    const cappedDays = await db.query<{ days: number }>("select (extract(epoch from expires_at - now()) / 86400)::float8 as days from sessions where hash = $1", [sha256Hex(capped.token)]);
+    expect(cappedDays.rows[0]!.days).toBeLessThan(3.01);
+    const browserBefore = await db.query<{ expires_at: Date }>("select expires_at from sessions where hash = $1", [sha256Hex(sessionToken)]);
+    await api("GET", "/api/me");
+    const browserAfter = await db.query<{ expires_at: Date }>("select expires_at from sessions where hash = $1", [sha256Hex(sessionToken)]);
+    expect(browserAfter.rows[0]!.expires_at).toEqual(browserBefore.rows[0]!.expires_at);
+    const expired = await phoneSession({ expires: "-1 second" });
+    for (const [method, path] of [["GET", "/api/agents"], ["GET", "/api/inbox"], ["POST", `/api/agents/${AGENT}/view-ticket`]] as const) {
+      expect((await api(method, path, method === "POST" ? {} : undefined, { cookie: false, origin: null, headers: bearer(expired.token) })).status).toBe(401);
+    }
+  });
+
+  it("revoking a phone closes its task stream and its viewer socket, and its token stops working", async () => {
+    const phone = await phoneSession();
+    const asPhone = { cookie: false, origin: null, headers: bearer(phone.token) } as const;
+    const task = await db.query<{ id: string }>("select id from tasks where agent_id = $1 order by created_at limit 1", [AGENT]);
+    const taskId = task.rows[0]!.id;
+    let streamEnded = false;
+    let streamStatus = 0;
+    const stream = http.get({
+      host: "127.0.0.1", port: appPort, path: `/api/tasks/${taskId}/events?after=0`,
+      headers: { host: `localhost:${appPort}`, ...bearer(phone.token) },
+    }, response => {
+      streamStatus = response.statusCode ?? 0;
+      response.resume();
+      response.on("end", () => { streamEnded = true; });
+      response.on("close", () => { streamEnded = true; });
+    });
+    stream.on("error", () => { streamEnded = true; });
+    await waitFor(() => streamStatus === 200 || undefined, "phone task stream");
+    await db.query("update agents set selkies_owner_token = 'owner-token' where id = $1", [AGENT]);
+    const viewer = await openViewer(phone.token);
+    let viewerClosed = false;
+    viewer.on("close", () => { viewerClosed = true; });
+    expect((await api("DELETE", `/api/sessions/${phone.id}`)).status).toBe(200);
+    await waitFor(() => (streamEnded && viewerClosed) || undefined, "stream and viewer closed");
+    for (const [method, path] of [["GET", "/api/agents"], ["GET", `/api/tasks/${taskId}`], ["POST", `/api/agents/${AGENT}/view-ticket`]] as const) {
+      expect((await api(method, path, method === "POST" ? {} : undefined, asPhone)).status).toBe(401);
+    }
+  });
+
+  it("closes an open viewer socket when its 12-hour viewer cookie runs out", async () => {
+    const phone = await phoneSession();
+    await db.query("update agents set selkies_owner_token = 'owner-token' where id = $1", [AGENT]);
+    const viewer = await openViewer(phone.token);
+    let closed = false;
+    viewer.on("close", () => { closed = true; });
+    await db.query("update view_sessions set expires_at = now() - interval '1 second' where session_hash = $1", [sha256Hex(phone.token)]);
+    await waitFor(() => closed || undefined, "viewer closed by the sweep", 20_000);
+    // The owner session itself is still signed in: only the viewer's capability ended.
+    expect((await api("GET", "/api/me", undefined, { cookie: false, headers: bearer(phone.token) })).status).toBe(200);
+  }, 30_000);
+
+  it("never opens the terminal for a phone token", async () => {
+    const phone = await phoneSession();
+    const refused = (headers: Record<string, string>) => new Promise<number>((resolve) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${appPort}/api/agents/${AGENT}/terminal`, { headers: { host: `localhost:${appPort}`, origin: `http://localhost:${appPort}`, ...headers } });
+      socket.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
+      socket.on("open", () => { socket.close(); resolve(101); });
+      socket.on("error", () => resolve(-1));
+    });
+    expect(await refused(bearer(phone.token))).toBe(403);
+    expect(await refused({ cookie: `qb_session=${phone.token}` })).toBe(401);
+  });
+
+  // A viewer socket opened the way the phone opens it: a view ticket from its bearer token, redeemed on the viewer
+  // origin for the viewer cookie, then the WebSocket with that cookie and the viewer Origin.
+  async function openViewer(token: string): Promise<WebSocket> {
+    const ticket = await api("POST", `/api/agents/${AGENT}/view-ticket`, {}, { cookie: false, origin: null, headers: bearer(token) });
+    expect(ticket.status).toBe(200);
+    const url = new URL(ticket.body.url as string);
+    const redeemed = await api("GET", `${url.pathname}${url.search}`, undefined, { cookie: false, origin: null, host: `view.localhost:${appPort}` });
+    expect(redeemed.status).toBe(303);
+    const viewCookie = redeemed.setCookie.find((c) => c.startsWith("qb_view="))!.split(";")[0]!;
+    const socket = new WebSocket(`ws://127.0.0.1:${appPort}/agents/${AGENT}/api/websockets`, {
+      headers: { host: `view.localhost:${appPort}`, origin: `http://view.localhost:${appPort}`, cookie: viewCookie },
+    });
+    await new Promise<void>((resolve, reject) => { socket.once("open", () => resolve()); socket.once("error", reject); });
+    return socket;
+  }
 
   it("keeps the audit log append-only for the application role", async () => {
     await expect(db.query("update audit_events set data = '{}' where seq = 1")).rejects.toThrow(/permission denied/);

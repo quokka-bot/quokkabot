@@ -127,7 +127,7 @@ export class DesktopLinks {
     // The session is created now, at the moment the app collects it; no session secret is ever stored.
     const sessionToken = newSecret();
     await this.db.query(
-      "insert into sessions (hash, expires_at, fresh_until, device_name) values ($1, now() + $2::interval, now() + $3::interval, $4)",
+      "insert into sessions (hash, expires_at, fresh_until, device_name, client) values ($1, now() + $2::interval, now() + $3::interval, $4, 'desktop')",
       [sha256Hex(sessionToken), `${SESSION_DAYS} days`, `${FRESH_MINUTES} minutes`, row.device_name],
     );
     return { state: "approved", kind: "signin", sessionToken };

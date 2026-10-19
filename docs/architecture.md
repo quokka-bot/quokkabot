@@ -65,6 +65,12 @@ executes it. There is no eval, cookie, storage, raw DevTools, upload or clipboar
   checks the name before any DNS lookup, refuses private, loopback, metadata and the host's own addresses, and closes
   open connections when a grant is removed. Government and bank sites can be marked "attended": reachable only while the
   owner has an attended session open.
+- **Owner sessions.** The web and Mac apps hold a session cookie, and every change they make must carry the app's own
+  Origin. The iPhone app keeps its token in the Keychain and sends it in an Authorization header, which a web page
+  cannot send to this origin; with that header every cookie is ignored. Each session works only the way it travels. A
+  phone session stays signed in for 30 days after its last use and ends after 180 days at the latest; it never counts
+  as a fresh passkey check. Signing a device out closes its streams and live views; a viewer socket also closes when
+  its 12-hour viewer cookie runs out.
 - **Live view.** Selkies runs in secure mode; control holds its master token. The owner watches on a separate viewer
   origin. The agent holds the input lock by default; "Take over" moves it to the owner on the server, and an expired or
   disconnected takeover pauses the agent instead of handing control back.
