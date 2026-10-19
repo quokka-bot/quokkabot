@@ -30,3 +30,5 @@ For people and coding agents changing this repository.
 - User-facing text says what happens, in short plain sentences. Never use an em dash; `pnpm check` rejects it.
 - No secrets, personal data or real accounts in code, tests or docs.
 - Do not commit plans, research notes or agent scratch files.
+- Every PR description ends with `Harness:`, `Model:` and `Effort:` lines naming the tool, the model id and the
+  reasoning effort that wrote it (`.github/pull_request_template.md`). The PR description check fails without them.

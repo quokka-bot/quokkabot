@@ -12,4 +12,12 @@ What this PR does about it.
 How you found the problem, what you ran to check the fix and what it showed, and what you could not check. UI
 changes need before and after screenshots.
 
-If an AI agent wrote this PR, name the model and the tool you ran it in.
+## Agent
+
+Required on every PR; the PR description check fails without all three lines. Name the tool you ran the agent in,
+the model id and the reasoning effort. Several of each: separate them with commas. Written by hand: `Harness: none`,
+`Model: none`, `Effort: none`.
+
+Harness:
+Model:
+Effort:

@@ -74,9 +74,18 @@ personal data or real accounts in code, tests or docs.
 
 ## Agents
 
-PRs written by AI agents are welcome. Name the model and the tool in the PR. You are the author and answer for every
-line; we judge the PR by the rules above, not by who or what wrote it. [AGENTS.md](AGENTS.md) is written for your
-agent.
+PRs written by AI agents are welcome. Every PR description ends with three lines that name what wrote it:
+
+```text
+Harness: Claude Code
+Model: claude-opus-5-5
+Effort: xhigh
+```
+
+The harness is the tool you ran the agent in, the model is its exact id and the effort is the reasoning effort you set.
+List several with commas; write `none` in all three when a person wrote the change. The PR description check fails
+without them. You are the author and answer for every line; we judge the PR by the rules above, not by who or what
+wrote it. [AGENTS.md](AGENTS.md) is written for your agent.
 
 <a id="closing"></a>
 
