@@ -119,7 +119,7 @@ function NativeFields({ agentId }: { agentId: string }) {
         textContentType={field.kind === "password" ? "password" : "oneTimeCode"} autoComplete={field.kind === "password" ? "current-password" : "one-time-code"}
         keyboardType={field.kind === "code" ? "number-pad" : "default"} autoCapitalize="none" autoCorrect={false} spellCheck={false}
         returnKeyType="send" onSubmitEditing={() => void fill(true)} accessibilityLabel={field.kind === "password" ? `Password for ${host}` : `Code for ${host}`} />
-      <Pressable accessibilityRole="button" disabled={busy || value === ""} onPress={() => void fill(false)} style={styles.fillButton}><Text style={styles.pillText}>Type</Text></Pressable>
+      <Pressable accessibilityRole="button" disabled={busy || value === ""} onPress={() => void fill(false)} style={styles.fillButton}><Text style={styles.fillText}>Type</Text></Pressable>
     </View>
     <Pressable accessibilityRole="button" onPress={() => { setField(null); setValue(""); }}><Text style={styles.hint}>Cancel</Text></Pressable>
     {message && <Text style={styles.hint}>{message}</Text>}
@@ -145,6 +145,7 @@ const styles = StyleSheet.create({
   fieldRow: { flexDirection: "row", gap: 8 },
   input: { flex: 1, minHeight: 46, borderRadius: 12, paddingHorizontal: 12, fontSize: 18, backgroundColor: "#fff", color: "#1C1C1C" },
   fillButton: { minHeight: 46, paddingHorizontal: 18, borderRadius: 12, backgroundColor: "#7442D1", alignItems: "center", justifyContent: "center" },
+  fillText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   hint: { color: "#bbb", fontSize: 14, textAlign: "center" },
   error: { color: "#FF6B5E", fontSize: 14, textAlign: "center", paddingBottom: 8 },
 });

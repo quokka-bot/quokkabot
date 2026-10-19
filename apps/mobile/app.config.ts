@@ -28,7 +28,8 @@ const config: ExpoConfig = {
   slug: "quokkabot",
   scheme: variant.scheme,
   version: "0.1.0",
-  orientation: "portrait",
+  // Landscape too: the agent's computer is a wide screen, and a takeover is easier with all of it.
+  orientation: "default",
   icon: "./assets/icon.png",
   userInterfaceStyle: "light",
   ios: {
@@ -40,16 +41,12 @@ const config: ExpoConfig = {
       ITSAppUsesNonExemptEncryption: false,
       NSCameraUsageDescription: "Scan the QR code your Quokka Bot server shows, to connect to it.",
     },
+    // The app sends what the owner does only to the server they sign in to, which they run (or which runs for them);
+    // the developer receives none of it, and the app has no analytics or tracking (quokkabot.com/privacy).
     privacyManifests: {
       NSPrivacyTracking: false,
       NSPrivacyTrackingDomains: [],
-      NSPrivacyCollectedDataTypes: [
-        { NSPrivacyCollectedDataType: "NSPrivacyCollectedDataTypeOtherUserContent", NSPrivacyCollectedDataTypeLinked: true, NSPrivacyCollectedDataTypeTracking: false, NSPrivacyCollectedDataTypePurposes: ["NSPrivacyCollectedDataTypePurposeAppFunctionality"] },
-        { NSPrivacyCollectedDataType: "NSPrivacyCollectedDataTypeUserID", NSPrivacyCollectedDataTypeLinked: true, NSPrivacyCollectedDataTypeTracking: false, NSPrivacyCollectedDataTypePurposes: ["NSPrivacyCollectedDataTypePurposeAppFunctionality"] },
-        { NSPrivacyCollectedDataType: "NSPrivacyCollectedDataTypeEmailAddress", NSPrivacyCollectedDataTypeLinked: true, NSPrivacyCollectedDataTypeTracking: false, NSPrivacyCollectedDataTypePurposes: ["NSPrivacyCollectedDataTypePurposeAppFunctionality"] },
-        { NSPrivacyCollectedDataType: "NSPrivacyCollectedDataTypeProductInteraction", NSPrivacyCollectedDataTypeLinked: true, NSPrivacyCollectedDataTypeTracking: false, NSPrivacyCollectedDataTypePurposes: ["NSPrivacyCollectedDataTypePurposeAppFunctionality"] },
-        { NSPrivacyCollectedDataType: "NSPrivacyCollectedDataTypeOtherDataTypes", NSPrivacyCollectedDataTypeLinked: true, NSPrivacyCollectedDataTypeTracking: false, NSPrivacyCollectedDataTypePurposes: ["NSPrivacyCollectedDataTypePurposeAppFunctionality"] },
-      ],
+      NSPrivacyCollectedDataTypes: [],
       // The app's own code reads UserDefaults only through Expo and React Native, whose manifests declare it.
       NSPrivacyAccessedAPITypes: [],
     },

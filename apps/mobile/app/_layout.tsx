@@ -35,7 +35,7 @@ function Screens() {
     </Stack.Protected>
     <Stack.Screen name="index" options={{ headerShown: false }} />
     <Stack.Protected guard={signedIn}>
-      <Stack.Screen name="agents/index" options={{ title: "Agents", headerLargeTitle: true }} />
+      <Stack.Screen name="agents/index" options={{ title: "Agents" }} />
       <Stack.Screen name="agents/[agentId]" options={{ title: "" }} />
       <Stack.Screen name="computer/[agentId]" options={{ headerShown: false, presentation: "fullScreenModal" }} />
       <Stack.Screen name="settings" options={{ title: "Settings" }} />
