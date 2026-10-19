@@ -8,6 +8,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { copyleftFree } from "./licence-expression.mjs";
+import { podLicences } from "./pod-licences.mjs";
 
 const COPYLEFT = /\b(A?GPL|LGPL|SSPL)/i;
 // Metro writes source paths relative to its server root, the workspace.
@@ -57,16 +58,13 @@ let pods = 0;
 if (existsSync(ios) && !existsSync(lock)) problems.push(`no Podfile.lock in ${ios}: run pod install, or remove the folder`);
 if (existsSync(lock)) {
   const specs = join(ios, "Pods/Local Podspecs");
-  for (const line of readFileSync(lock, "utf8").split("\n")) {
-    const match = /^ {2}- ([A-Za-z0-9_+.-]+)(?:\/[^ ]+)? \(/.exec(line);
-    if (!match) continue;
-    pods += 1;
-    const spec = join(specs, `${match[1]}.podspec.json`);
-    if (!existsSync(spec)) continue;
-    const license = JSON.parse(readFileSync(spec, "utf8")).license;
-    const text = typeof license === "string" ? license : license?.type;
-    if (typeof text === "string" && !allowed(text)) problems.push(`pod ${match[1]}: ${text}`);
-  }
+  const readSpec = (name) => {
+    const spec = join(specs, `${name}.podspec.json`);
+    return existsSync(spec) ? JSON.parse(readFileSync(spec, "utf8")) : null;
+  };
+  const result = podLicences(readFileSync(lock, "utf8"), readSpec, allowed);
+  pods = result.pods;
+  problems.push(...result.problems);
 }
 
 const summary = [...licences].sort((a, b) => b[1] - a[1]).map(([licence, count]) => `${licence} ${count}`).join(", ");

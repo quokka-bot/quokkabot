@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { router } from "expo-router";
+import { router, useIsFocused } from "expo-router";
 import { Alert, AppState, KeyboardAvoidingView, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -114,8 +114,14 @@ function NativeFields({ agentId }: { agentId: string }) {
     } catch (failure) { setMessage(failure instanceof Error ? failure.message : String(failure)); }
     finally { setValue(""); setBusy(false); }
   };
-  // The value lives only in this field: cleared after every fill, when the field closes and when the app goes to the
-  // background. Not on "inactive": iOS passes through it while Face ID approves a saved password for this field.
+  // The value lives only in this field: cleared after every fill, when the field closes, when another screen covers
+  // this one (the permission screen) and when the app goes to the background. Not on "inactive": iOS passes through it
+  // while Face ID approves a saved password for this field.
+  const focused = useIsFocused();
+  useEffect(() => {
+    if (focused) return;
+    setField(null); setValue(""); input.current?.blur();
+  }, [focused]);
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "background") return;
