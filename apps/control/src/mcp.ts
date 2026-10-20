@@ -588,16 +588,19 @@ export class McpEndpoint {
     const sites = domains.map(siteLabel).join(", ");
     // One card per site per task: a site already in this task's open request is waited on, not asked again. Decided
     // requests, other tasks and other agents never count.
-    const { created, waitIds } = await withTx(this.db, async (tx) => {
+    const asked = await withTx(this.db, async (tx) => {
       // Serializes two calls of the same task, so both cannot insert the same site.
       await tx.query("select 1 from tasks where id = $1 for update", [ctx.task.id]);
+      // Another call of this run may have parked it since callNow looked: a request made now would never resume it.
+      const run = await one<{ fenced_at: Date | null }>(tx, "select fenced_at from runs where id = $1", [ctx.runId]);
+      if (run.fenced_at) return null;
       const open = await many<{ id: string; domains: string[] }>(
         tx,
         "select id, domains from domain_requests where agent_id = $1 and task_id = $2 and decided_at is null order by created_at",
         [ctx.agentId, ctx.task.id],
       );
-      const asked = new Set(open.flatMap((row) => row.domains));
-      const missing = domains.filter((pattern) => !asked.has(pattern));
+      const openSites = new Set(open.flatMap((row) => row.domains));
+      const missing = domains.filter((pattern) => !openSites.has(pattern));
       const waitIds = open.filter((row) => row.domains.some((pattern) => domains.includes(pattern))).map((row) => row.id);
       if (missing.length === 0) return { created: null, waitIds };
       const id = randomUUID();
@@ -609,6 +612,8 @@ export class McpEndpoint {
       await this.events.append(tx, ctx.task.id, { kind: "domain_request", requestId: id as DomainRequestId, domains: missing, reason: input.reason });
       return { created: { id, domains: missing }, waitIds: [...waitIds, id] };
     });
+    if (!asked) return { status: "blocked", text: "You are waiting for the owner. End your turn now; you continue when they decide." };
+    const { created, waitIds } = asked;
     if (created) {
       await this.audit.append(ctx.agentId, "agent", "domain.requested", { requestId: created.id, domains: created.domains, reason: this.audit.textDigest(input.reason) });
     }

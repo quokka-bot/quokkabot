@@ -1270,15 +1270,15 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     const taskId = created.body.id as string;
     const run = await waitFor(() => [...runs.values()][before], "reuse boundary run");
     const cli = await mcpClient(String(run.request.mcpToken));
+    const earlierTask = randomUUID();
     const openFor = async (where: string, values: unknown[]) =>
       (await db.query<{ id: string }>(`select id from domain_requests where decided_at is null and ${where} order by created_at`, values)).rows;
     try {
       // Open requests for the same site from another task of this agent and from another agent (even naming this task).
-      const earlier = (await db.query<{ id: string }>("select id from tasks where agent_id = $1 and id <> $2 limit 1", [AGENT, taskId])).rows[0];
-      if (!earlier) throw new Error("No earlier task of this agent");
+      await db.query("insert into tasks (id, agent_id, title, prompt, state, model, effort, session_id) values ($1, $2, 'Earlier task', 'Earlier prompt', 'completed', 'claude-opus-5-5', 'xhigh', $3)", [earlierTask, AGENT, randomUUID()]);
       const otherTask = randomUUID();
       const otherAgent = randomUUID();
-      await db.query("insert into domain_requests (id, agent_id, task_id, domains, reason) values ($1, $2, $3, '{*.shop.example}', 'Other task')", [otherTask, AGENT, earlier.id]);
+      await db.query("insert into domain_requests (id, agent_id, task_id, domains, reason) values ($1, $2, $3, '{*.shop.example}', 'Other task')", [otherTask, AGENT, earlierTask]);
       await db.query("insert into domain_requests (id, agent_id, task_id, domains, reason) values ($1, $2, $3, '{*.shop.example}', 'Other agent')", [otherAgent, AGENT2, taskId]);
 
       const refused = cli.callTool({ name: "request_domains", arguments: { domains: ["www.shop.example"], reason: "Open the shop" } });
@@ -1307,6 +1307,7 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     } finally {
       await cli.close();
       await db.query("delete from domain_requests where reason in ('Other task', 'Other agent')");
+      await db.query("delete from tasks where id = $1", [earlierTask]);
       await api("POST", `/api/tasks/${taskId}/cancel`, {});
     }
   }, 60_000);
