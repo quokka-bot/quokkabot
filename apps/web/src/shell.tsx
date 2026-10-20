@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, Navigate, NavLink, Outlet, useNavigate, useParams } from "react-router";
+import { Link, Navigate, NavLink, Outlet, useParams } from "react-router";
 import type { AgentSummary } from "@quokkabot/shared";
 import { api } from "./api.js";
 import { Audit } from "./audit.js";
@@ -31,7 +31,6 @@ function AgentRow({ agent, index }: { agent: AgentSummary; index: number }) {
 }
 
 function Sidebar() {
-  const navigate = useNavigate();
   const interval = usePollInterval();
   const agents = useQuery({ queryKey: ["agents"], queryFn: api.agents, refetchInterval: interval });
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
@@ -40,11 +39,11 @@ function Sidebar() {
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState(false);
   const list = (agents.data?.agents ?? []).filter(agent => agent.name.toLowerCase().includes(filter.toLowerCase()));
-  const newTaskFor = agentId ?? agents.data?.agents[0]?.id;
+  const appsFor = agentId ?? agents.data?.agents[0]?.id;
   return <aside className="sidebar">
     <div className="sidebar-top">
       <button type="button" className="round-button" aria-label="Search agents" onClick={() => setSearching(value => !value)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg></button>
-      <button type="button" className="round-button" aria-label="New task" disabled={!newTaskFor} onClick={() => { if (newTaskFor) void navigate(`/agents/${newTaskFor}?new=1`); }}>+</button>
+      <button type="button" className="round-button" aria-label="New agent" title="New agent" disabled={!agents.data} onClick={() => setAdding(true)}>+</button>
     </div>
     {searching && <input className="sidebar-search" aria-label="Search agents" placeholder="Search" value={filter} autoFocus onChange={event => setFilter(event.target.value)} />}
     <nav className="agent-list" aria-label="Agents">
@@ -56,7 +55,7 @@ function Sidebar() {
     {adding && agents.data && <NewAgentDialog data={agents.data} onClose={() => setAdding(false)} />}
     <div className="sidebar-bottom">
       <NavLink to="/settings" className="owner-avatar" aria-label="Settings" title="Settings">{(me.data?.ownerName ?? "?").slice(0, 1).toUpperCase()}</NavLink>
-      {newTaskFor ? <NavLink to={`/agents/${newTaskFor}/apps`} className="pill">Connect apps <GmailIcon /></NavLink> : <NavLink to="/settings" className="pill">Settings</NavLink>}
+      {appsFor ? <NavLink to={`/agents/${appsFor}/apps`} className="pill">Connect apps <GmailIcon /></NavLink> : <NavLink to="/settings" className="pill">Settings</NavLink>}
     </div>
   </aside>;
 }

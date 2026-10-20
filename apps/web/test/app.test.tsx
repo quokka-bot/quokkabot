@@ -517,13 +517,11 @@ describe("chat composer", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
   });
 
-  it.each(["sidebar", "composer"] as const)("starts a new task from the %s and focuses its composer", async location => {
+  it("starts a new task from the composer and focuses it", async () => {
     await openChat();
-    const container = location === "sidebar"
-      ? screen.getByRole("navigation", { name: "Agents" }).closest("aside")
-      : screen.getByRole("textbox", { name: "Message" }).closest("form");
-    if (!container) throw new Error(`No ${location} container`);
-    fireEvent.click(within(container).getByRole("button", { name: "New task" }));
+    const form = screen.getByRole("textbox", { name: "Message" }).closest("form");
+    if (!form) throw new Error("No composer form");
+    fireEvent.click(within(form).getByRole("button", { name: "New task" }));
     const composer = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: "New task" });
     expect(screen.getByLabelText("App route").textContent).toBe(`/agents/${agentId}?new=1`);
     expect(composer.disabled).toBe(false);

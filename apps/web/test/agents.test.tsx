@@ -19,8 +19,12 @@ function open(path = `/agents/${agentId}`) {
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity }, mutations: { retry: false } } });
   return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><App /><Location /></MemoryRouter></QueryClientProvider>);
 }
-async function openNewAgent() {
-  const button = await screen.findByRole("button", { name: /New agent/ });
+// The sidebar has two: the + beside search and the New agent button under the list.
+async function openNewAgent(which: "top" | "list" = "list") {
+  const buttons = await screen.findAllByRole("button", { name: "New agent" });
+  expect(buttons).toHaveLength(2);
+  const button = which === "top" ? buttons[0] : buttons[1];
+  if (!button) throw new Error(`No ${which} New agent button`);
   await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(button);
 }
@@ -80,6 +84,12 @@ describe("agent lifecycle UI", () => {
     expect(fetchMock.mock.calls.find(([url, init]) => url === "/api/agents" && init?.method === "POST")?.[1]?.body).toBe(JSON.stringify({ name: "Billing" }));
     expect(client.getQueryData(["old-slot-data", secondId])).toBeUndefined();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+  it("opens New agent from the + beside search", async () => {
+    open();
+    await openNewAgent("top");
+    expect(screen.getByRole("dialog", { name: "New agent" })).toBeTruthy();
+    expect(screen.getByLabelText("Route").textContent).toBe(`/agents/${agentId}`);
   });
   it("uses a hole in the slots for the suggested name", async () => {
     agents = [{ ...agent, index: 2 }];
