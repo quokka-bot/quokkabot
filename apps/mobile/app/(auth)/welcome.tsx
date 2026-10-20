@@ -7,7 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { deviceName, passkeyDomain, PRIVACY_URL, SUPPORT_URL } from "../../src/device";
 import { useSession, appFetch } from "../../src/session";
 import { discover, signInWithPasskey } from "../../src/sign-in";
-import { AgentAvatar, Button, ErrorLine } from "../../src/ui/kit";
+import { Button, ErrorLine, ProductMark } from "../../src/ui/kit";
 import { colors } from "../../src/ui/theme";
 
 export default function Welcome() {
@@ -30,7 +30,7 @@ export default function Welcome() {
   };
   return <SafeAreaView style={styles.page}>
     <View style={styles.top}>
-      <AgentAvatar index={1} size={72} />
+      <ProductMark size={72} />
       <Text style={styles.title}>Quokka Bot</Text>
       <Text style={styles.lead}>Your agents and their computers. Answer their questions, approve sites and logins, and take over the computer when only a person can.</Text>
     </View>

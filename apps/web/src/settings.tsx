@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { DesktopLinkDecideRequest, Effort, type AgentSummary, type SessionView } from "@quokkabot/shared";
+import { agentLook } from "@quokkabot/client";
+import { DesktopLinkDecideRequest, Effort, type AgentLook, type AgentSummary, type SessionView } from "@quokkabot/shared";
 import { encode } from "uqr";
 import { api } from "./api.js";
 import { RemoveAgent } from "./agent-dialog.js";
 import { storeAgent } from "./agent-name.js";
 import { AiConsentSetting } from "./ai-consent.js";
+import { LookPicker } from "./avatar.js";
 import { ClaudeSetting } from "./claude-sign-in.js";
 import { LINK_CODE_KEY } from "./link.js";
 import { OwnerNameSetting } from "./owner.js";
@@ -105,15 +107,21 @@ export function Settings({ agent }: { agent: AgentSummary }) {
   const [typedName, setName] = useState<string | null>(null);
   const [model, setModel] = useState(agent.model);
   const [effort, setEffort] = useState(agent.effort);
+  // Null until the owner picks here: the picker shows the agent's current look, and Save sends a look only when the
+  // owner picked one, then follows the agent's look again.
+  const [pickedLook, setPickedLook] = useState<AgentLook | null>(null);
   const client = useQueryClient();
   const save = useAction(async () => {
     const sent = typedName?.trim();
-    await storeAgent(client, await api.settings(agent.id, model.trim(), effort, sent));
+    const look = pickedLook ?? undefined;
+    await storeAgent(client, await api.settings(agent.id, model.trim(), effort, sent, look));
     setName(current => current?.trim() === sent ? null : current);
+    setPickedLook(current => current === look ? null : current);
   });
   return <>
     <h2>Settings</h2><form className="card settings-form" onSubmit={event => { event.preventDefault(); save.mutate(); }}>
       <label>Name<input value={typedName ?? agent.name} onChange={event => setName(event.target.value)} required maxLength={40} /></label>
+      <LookPicker look={pickedLook ?? agentLook(agent)} onChange={setPickedLook} />
       <label>Model<input value={model} onChange={event => setModel(event.target.value)} autoCapitalize="none" autoCorrect="off" required maxLength={81} /></label><p className="meta">Current default: {agent.model}</p>
       <label>Effort<select value={effort} onChange={event => setEffort(Effort.parse(event.target.value))}>{Effort.options.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
       <button className="primary" disabled={save.isPending}>Save settings</button><ErrorLine error={save.error} />{save.isSuccess && <p role="status">Settings saved.</p>}

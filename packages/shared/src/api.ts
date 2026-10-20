@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AttachmentIds } from "./attachments.js";
+import { AgentLook } from "./agent-look.js";
 import { AiConsentView } from "./ai-consent.js";
 import { AuditEvent } from "./audit.js";
 import { ControlLease, OwnerFillRequest, OwnerFocusResult, ScreenSize } from "./browser.js";
@@ -136,6 +137,9 @@ export const AgentSummary = z.object({
   waitingOnOwner: z.number().int(),
   // Null from a server older than consent records.
   aiConsent: AiConsentView.nullable().default(null),
+  // The owner's pick in Agent settings. Null when the owner has not picked one (or from an older server): the apps then
+  // derive the look from the slot.
+  look: AgentLook.nullable().default(null),
 });
 export type AgentSummary = z.infer<typeof AgentSummary>;
 
@@ -163,9 +167,10 @@ export type AgentsResponse = z.infer<typeof AgentsResponse>;
 // POST /api/agents/:agentId/attended  { open }       -> ComputerView
 // POST /api/agents/:agentId/view-ticket              -> { url }  (one-time URL on the viewer origin)
 // GET  /api/agents/:agentId/terminal (WebSocket)     needs fresh auth; frames are TerminalClientFrame/ServerFrame
-// A rename sends only the name, so it never writes back a model or effort another app changed a moment earlier.
-export const AgentSettingsRequest = z.object({ name: AgentName.optional(), model: ModelId.optional(), effort: Effort.optional() }).strict()
-  .refine(body => body.name !== undefined || body.model !== undefined || body.effort !== undefined, { message: "Send a name, a model or an effort." });
+// Each field is optional: a rename sends only the name, so it never writes back a model or effort another app changed a
+// moment earlier. look: omitted keeps the current look, null goes back to the slot's look.
+export const AgentSettingsRequest = z.object({ name: AgentName.optional(), model: ModelId.optional(), effort: Effort.optional(), look: AgentLook.nullable().optional() }).strict()
+  .refine(body => body.name !== undefined || body.model !== undefined || body.effort !== undefined || body.look !== undefined, { message: "Send a name, a model, an effort or a look." });
 export const TakeoverRequest = z.object({ action: z.enum(["take", "return"]) }).strict();
 // Native fields during the owner's takeover. Fill echoes the inspected focusId, never a caller-chosen origin.
 // The browser binds that short-lived handle to the inspected lease. Neither response returns a typed value.

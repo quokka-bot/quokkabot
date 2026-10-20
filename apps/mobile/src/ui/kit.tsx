@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
-import { agentColour, colors } from "./theme";
+import { colors } from "./theme";
 
-// Small building blocks shared by every screen: buttons in the web app's pill style, an error line, an avatar.
+export { AgentAvatar, ProductMark } from "./agent-avatar";
+
+// Small building blocks shared by every screen: buttons in the web app's pill style, an error line, the avatars.
 
 export function Button({ title, onPress, kind = "dark", disabled = false, busy = false, style }: {
   title: string; onPress: () => void; kind?: "dark" | "light" | "quiet"; disabled?: boolean; busy?: boolean; style?: StyleProp<ViewStyle>;
@@ -21,15 +23,6 @@ export function ErrorLine({ error }: { error: unknown }) {
 
 export function Notice({ children }: { children: ReactNode }) {
   return <Text style={styles.notice}>{children}</Text>;
-}
-
-// A soft blob with two eyes, like the web app's, drawn with views.
-export function AgentAvatar({ index, size = 36 }: { index: number; size?: number }) {
-  const eye = { width: size * 0.1, height: size * 0.16, borderRadius: size, backgroundColor: "#fff", position: "absolute" as const, top: size * 0.32 };
-  return <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
-    style={{ width: size, height: size, borderRadius: size * 0.46, backgroundColor: agentColour(index), transform: [{ rotate: "-12deg" }] }}>
-    <View style={[eye, { left: size * 0.36 }]} /><View style={[eye, { left: size * 0.54, top: size * 0.29 }]} />
-  </View>;
 }
 
 const styles = StyleSheet.create({

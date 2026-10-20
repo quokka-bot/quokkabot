@@ -99,7 +99,7 @@ export class AgentSlots {
         [this.configuredIds]);
       if (!slot) throw new HttpError(409, "no_free_slot", capacityMessage(this.configuredIds.length));
       await tx.query(
-        "update agents set name = $2, added_at = $5::timestamptz, generation = generation + 1, model = $3, effort = $4, cli_signed_in = 'no', cli_account = null, cli_plan = null, removing_at = null where id = $1",
+        "update agents set name = $2, added_at = $5::timestamptz, generation = generation + 1, model = $3, effort = $4, cli_signed_in = 'no', cli_account = null, cli_plan = null, look_shape = null, look_colour = null, removing_at = null where id = $1",
         [slot.id, name, this.config.defaultModel, this.config.defaultEffort, new Date().toISOString()]);
       await this.audit.append(slot.id, "owner", "agent.added", { name }, tx);
       return slot.id;

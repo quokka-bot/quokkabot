@@ -88,6 +88,14 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .block { display: block; margin-top: 2px; font-weight: 400; color: var(--muted); }
 .settings-form { max-width: 560px; }
 .settings-form label { margin-bottom: 14px; }
+.look-picker { display: grid; gap: 12px; margin-bottom: 14px; }
+.look-picker fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.look-picker legend { padding: 0; margin-bottom: 6px; font-size: 12px; font-weight: 600; color: var(--text-soft); }
+.look-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.settings-form .look-option { position: relative; display: grid; place-items: center; width: 44px; height: 44px; margin: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--card); cursor: pointer; }
+.settings-form .look-option:hover { background: var(--hover); }
+.settings-form .look-option:has(input:checked) { border-color: var(--text); box-shadow: 0 0 0 1px var(--text); }
+.settings-form .look-option:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .login-form { margin-top: 12px; }
 .login-form > button { margin: -4px 8px 14px 0; }
 
@@ -115,7 +123,32 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .sidebar-bottom .pill { flex: 1; }
 .sidebar-bottom .pill.active { border-color: var(--text); }
 .owner-avatar { width: 36px; height: 36px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: #6b4f45; color: #fff; font-size: 15px; font-weight: 600; }
-.agent-avatar { display: block; flex-shrink: 0; }
+/* Agent avatars (avatar.tsx). Still at rest. Pointer over the avatar or its row: the head leans, the eyes glance up and
+   a smirk appears, once, and they hold until the pointer leaves. While the agent works: a 4 s breath and an 8 s look
+   left, look right and blink. Distances are in the avatar's 64-unit box, so every size moves alike. */
+.agent-avatar { display: block; flex-shrink: 0; overflow: visible; }
+.agent-avatar .avatar-breathe, .agent-avatar .avatar-lean { transform-box: view-box; transform-origin: 32px 48px; }
+.agent-avatar .avatar-eye, .agent-avatar .avatar-blink { transform-box: fill-box; transform-origin: center; }
+.agent-avatar .avatar-lean { transition: transform 320ms cubic-bezier(.2, .7, .3, 1); }
+.agent-avatar .avatar-glance { transition: transform 260ms cubic-bezier(.2, .7, .3, 1); }
+.agent-avatar .avatar-eye { transition: transform 220ms ease-out; }
+.agent-avatar .avatar-mouth { opacity: 0; transition: opacity 180ms ease-out; }
+@media (hover: hover) {
+  :is(.agent-row, .title-pill, .working-face, .look-option, .panel-head .agent-avatar, .chat-empty .agent-avatar):hover .avatar-lean { transform: rotate(4deg); }
+  :is(.agent-row, .title-pill, .working-face, .look-option, .panel-head .agent-avatar, .chat-empty .agent-avatar):hover .avatar-glance { transform: translate(2.2px, -1px); }
+  :is(.agent-row, .title-pill, .working-face, .look-option, .panel-head .agent-avatar, .chat-empty .agent-avatar):hover .avatar-eye-left { transform: scaleY(.72); }
+  :is(.agent-row, .title-pill, .working-face, .look-option, .panel-head .agent-avatar, .chat-empty .agent-avatar):hover .avatar-mouth { opacity: 1; }
+}
+.agent-row:focus-visible .avatar-lean { transform: rotate(4deg); }
+.agent-row:focus-visible .avatar-glance { transform: translate(2.2px, -1px); }
+.agent-row:focus-visible .avatar-eye-left { transform: scaleY(.72); }
+.agent-row:focus-visible .avatar-mouth { opacity: 1; }
+.agent-avatar[data-state="working"] .avatar-breathe { animation: avatar-breathe 4s ease-in-out infinite; }
+.agent-avatar[data-state="working"] .avatar-gaze { animation: avatar-gaze 8s ease-in-out infinite; }
+.agent-avatar[data-state="working"] .avatar-blink { animation: avatar-blink 8s ease-in-out infinite; }
+@keyframes avatar-breathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-1.2px) scale(1.025); } }
+@keyframes avatar-gaze { 0%, 14% { transform: translate(0, 0); } 22%, 42% { transform: translate(-2.4px, .6px); } 50%, 70% { transform: translate(2.4px, .6px); } 78%, 100% { transform: translate(0, 0); } }
+@keyframes avatar-blink { 0%, 87.5%, 89.5%, 100% { transform: scaleY(1); } 88.5% { transform: scaleY(.1); } }
 
 .agent-screen { display: flex; height: 100%; min-width: 0; }
 .center { position: relative; display: flex; flex-direction: column; flex: 1; min-width: 0; height: 100%; }
@@ -173,10 +206,7 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .steps-list li.step-note { margin: 8px 0 4px -20px; list-style: none; color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, ui-sans-serif, sans-serif; font-size: 13px; }
 .steps-list li.step-note:first-child { margin-top: 0; }
 .working { display: flex; align-items: center; gap: 10px; margin: 10px 0 6px 2px; }
-.working-face { display: inline-flex; animation: bob 1.6s ease-in-out infinite; }
-.working-face ellipse { transform-box: fill-box; transform-origin: center; animation: blink 3.2s infinite; }
-@keyframes bob { 0%, 100% { transform: translateY(0) rotate(0deg); } 25% { transform: translateY(-2px) rotate(-4deg); } 75% { transform: translateY(1px) rotate(4deg); } }
-@keyframes blink { 0%, 44%, 50%, 100% { transform: scaleY(1); } 47% { transform: scaleY(.1); } }
+.working-face { display: inline-flex; }
 .shimmer {
   font-size: 14px;
   background: linear-gradient(90deg, var(--text) 0%, var(--text) 35%, #b9b9b9 50%, var(--text) 65%, var(--text) 100%);
@@ -351,7 +381,13 @@ summary { min-height: 34px; cursor: pointer; font-size: 13px; font-weight: 500; 
 .desktop-flow { margin: 10px 0; padding: 14px; border-radius: 14px; background: var(--sidebar); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
-@media (prefers-reduced-motion: reduce) { .typing, .working-face, .working-face ellipse, .shimmer { animation: none; } .shimmer { color: var(--text); } }
+@media (prefers-reduced-motion: reduce) { .typing, .shimmer { animation: none; } .shimmer { color: var(--text); } }
+/* Reduced motion: the avatars change pose at once and never loop. A working agent looks down at its work. */
+@media (prefers-reduced-motion: reduce) {
+  .agent-avatar .avatar-lean, .agent-avatar .avatar-glance, .agent-avatar .avatar-eye, .agent-avatar .avatar-mouth { transition: none; }
+  .agent-avatar[data-state="working"] .avatar-breathe, .agent-avatar[data-state="working"] .avatar-gaze, .agent-avatar[data-state="working"] .avatar-blink { animation: none; }
+  .agent-avatar[data-state="working"] .avatar-gaze { transform: translate(-2.4px, .6px); }
+}
 
 @media (max-width: 1100px) {
   .panel { display: none; }

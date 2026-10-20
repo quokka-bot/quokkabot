@@ -1,6 +1,6 @@
 import pino from "pino";
 import { Duplex } from "node:stream";
-import { Auth } from "../src/auth.js";
+import { Auth, SESSION_COOKIE } from "../src/auth.js";
 import { TaskService } from "../src/tasks.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSettingsRequest } from "@quokkabot/shared";
@@ -25,7 +25,7 @@ const config = {
   appHost: "quokkabot.test", viewHost: "view.quokkabot.test", secrets: { sessionSecret: Buffer.alloc(32, 1) },
 } as ControlConfig;
 
-interface Row extends SlotRow { name: string; model: string; effort: string; cli_signed_in: string }
+interface Row extends SlotRow { name: string; model: string; effort: string; cli_signed_in: string; look_shape: string | null; look_colour: string | null }
 // Only the slot SQL is simulated here. The Docker integration suite exercises PostgreSQL locks and cascades.
 class SlotDb {
   readonly rows = new Map<string, Row>();
@@ -54,15 +54,23 @@ class SlotDb {
     const row = this.rows.get(id);
     if (sql.includes("insert into agents")) {
       if (!row) this.rows.set(id, { id, idx: Number(values[1]), generation: 1, name: String(values[2]), model: String(values[3]), effort: String(values[4]),
-        cli_signed_in: "unknown", added_at: values[1] === 1 ? new Date() : null, removing_at: null, killed_at: null });
+        cli_signed_in: "unknown", look_shape: null, look_colour: null, added_at: values[1] === 1 ? new Date() : null, removing_at: null, killed_at: null });
       return { rows: [] };
     }
     if (sql.startsWith("select id from agents where id = any")) return { rows: [...this.rows.values()].filter(row => (values[0] as string[]).includes(row.id) && row.added_at).sort((a, b) => a.idx - b.idx).map(row => ({ id: row.id })) };
     if (sql.startsWith("select * from agents")) return { rows: row && (!sql.includes("added_at is not null") || row.added_at) ? [{ ...row }] : [] };
-    if (sql.startsWith("update agents set name")) { Object.assign(row!, { name: values[1], model: values[2], effort: values[3], cli_signed_in: "no", generation: row!.generation + 1, added_at: new Date() }); return { rows: [] }; }
+    if (sql.startsWith("update agents set name")) {
+      expect(sql).toContain("look_shape = null, look_colour = null");
+      Object.assign(row!, { name: values[1], model: values[2], effort: values[3], cli_signed_in: "no", look_shape: null, look_colour: null, generation: row!.generation + 1, added_at: new Date() });
+      return { rows: [] };
+    }
     if (sql.startsWith("update agents set removing_at")) { row!.removing_at = new Date(); return { rows: [] }; }
     if (sql.includes("update agents set added_at = null")) { Object.assign(row!, { name: values[1], model: values[2], effort: values[3], cli_signed_in: "no", added_at: null, removing_at: null }); return { rows: [] }; }
-    if (sql.startsWith("update agents set model")) { Object.assign(row!, { model: values[1] ?? row!.model, effort: values[2] ?? row!.effort, name: values[3] ?? row!.name }); return { rows: [] }; }
+    if (sql.startsWith("update agents set model")) {
+      Object.assign(row!, { model: values[1] ?? row!.model, effort: values[2] ?? row!.effort, name: values[3] ?? row!.name });
+      if (values[4] === true) Object.assign(row!, { look_shape: values[5], look_colour: values[6] });
+      return { rows: [] };
+    }
     if (sql.startsWith("select id, idx, generation, removing_at")) return { rows: row ? [{ cli_account: null, cli_plan: null, ...row }] : [] };
     if (sql.startsWith("select id, signed_in_at from claude_sign_in")) return { rows: this.shared ? [this.shared] : [] };
     if (sql.includes("as n")) return { rows: [{ n: 0 }] };
@@ -232,11 +240,13 @@ describe("agent slots", () => {
 
 const servers: Awaited<ReturnType<typeof buildServer>>["app"][] = [];
 afterEach(async () => { for (const app of servers.splice(0)) await app.close(); });
-async function httpFixture({ signedIn = true } = {}) {
+// session: who each request is. The default is the owner on every request, or nobody with signedIn false.
+type Session = (token: string | undefined, kind: "cookie" | "bearer") => Promise<unknown>;
+async function httpFixture({ signedIn = true, session }: { signedIn?: boolean; session?: Session } = {}) {
   const fixtureData = await fixture();
   const { slots, db, audit } = fixtureData;
   const computer = { releaseKill: vi.fn(async () => undefined), view: vi.fn(async () => ({ state: "stopped", sandboxes: [], lease: { holder: "paused", generation: 1, expiresAt: null }, attendedOpen: false, killedAt: null })) };
-  const { app } = await buildServer({ config, slots, db, audit, computer, consents: { view: async () => ({ provider: "anthropic", disclosureVersion: "test", state: "not_asked", required: false, allowed: true, changedAt: null, changedBy: null }) }, vault: { list: vi.fn() }, auth: { session: async () => signedIn ? { hash: "owner", freshUntil: new Date(Date.now() + 10000) } : null },
+  const { app } = await buildServer({ config, slots, db, audit, computer, consents: { view: async () => ({ provider: "anthropic", disclosureVersion: "test", state: "not_asked", required: false, allowed: true, changedAt: null, changedBy: null }) }, vault: { list: vi.fn() }, auth: { session: session ?? (async () => signedIn ? { hash: "owner", freshUntil: new Date(Date.now() + 10000) } : null) },
     log: pino({ level: "silent" }), webRoot: "/missing" } as unknown as HttpDeps);
   servers.push(app);
   const headers = { host: config.appHost, origin: config.appOrigin };
@@ -272,6 +282,50 @@ describe("owner agent routes", () => {
     const result = await app.inject({ method: "PUT", url: `/api/agents/${row.id}/settings`, headers, payload: { name: "  Invoices  ", model: config.defaultModel, effort: config.defaultEffort } });
     expect(result.statusCode).toBe(200);
     expect(result.json().name).toBe("Invoices");
+  });
+  it("stores the owner's look, keeps it through a rename and starts a new occupant of the slot without it", async () => {
+    const { app, headers, row, slots, deps } = await httpFixture();
+    const settings = (payload: object) => app.inject({ method: "PUT", url: `/api/agents/${row.id}/settings`, headers, payload: { model: config.defaultModel, effort: config.defaultEffort, ...payload } });
+    expect((await app.inject({ url: `/api/agents/${row.id}`, headers })).json().look).toBeNull();
+    const picked = await settings({ look: { shape: "ghost", colour: "teal" } });
+    expect(picked.statusCode).toBe(200);
+    expect(picked.json().look).toEqual({ shape: "ghost", colour: "teal" });
+    const renamed = await settings({ name: "Invoices" });
+    expect(renamed.json()).toMatchObject({ name: "Invoices", look: { shape: "ghost", colour: "teal" } });
+    expect((await settings({ look: null })).json().look).toBeNull();
+    expect((await settings({ look: { shape: "drop", colour: "sky" } })).json().look).toEqual({ shape: "drop", colour: "sky" });
+    await slots.remove(row.id, deps as unknown as Parameters<AgentSlots["remove"]>[1]);
+    expect(await slots.create("Replacement")).toBe(row.id);
+    expect((await app.inject({ url: `/api/agents/${row.id}`, headers })).json()).toMatchObject({ name: "Replacement", look: null });
+  });
+  it.each([
+    ["an unknown shape", { shape: "star", colour: "red" }],
+    ["a colour value instead of a name", { shape: "blob", colour: "#ff0000" }],
+    ["markup in the colour", { shape: "blob", colour: "red\" onload=\"alert(1)" }],
+    ["a style in the shape", { shape: "blob; fill: url(https://example.test/x)", colour: "red" }],
+    ["an extra field", { shape: "blob", colour: "red", path: "M0 0h64v64H0z" }],
+    ["half a look", { shape: "blob" }],
+    ["a bare string", "ghost"],
+  ])("refuses %s as a look and keeps the stored one", async (_case, look) => {
+    const { app, headers, row } = await httpFixture();
+    Object.assign(row, { look_shape: "cloud", look_colour: "grey" });
+    const result = await app.inject({ method: "PUT", url: `/api/agents/${row.id}/settings`, headers, payload: { model: config.defaultModel, effort: config.defaultEffort, look } });
+    expect(result.statusCode).toBe(400);
+    expect(row).toMatchObject({ look_shape: "cloud", look_colour: "grey", model: config.defaultModel });
+  });
+  it("changes a look only for the owner's session, never for another bearer token such as an agent's", async () => {
+    const { app, headers, row, audit } = await httpFixture({ session: async (token, kind) => kind === "cookie" && token === "owner-cookie" ? { hash: "owner", freshUntil: new Date(Date.now() + 10000) } : null });
+    const payload = { model: config.defaultModel, effort: config.defaultEffort, look: { shape: "scallop", colour: "ink" } };
+    for (const extra of [{}, { authorization: "Bearer agent-mcp-token" }]) {
+      const refused = await app.inject({ method: "PUT", url: `/api/agents/${row.id}/settings`, headers: { ...headers, ...extra }, payload });
+      expect(refused.statusCode).toBe(401);
+    }
+    expect(row).toMatchObject({ look_shape: null, look_colour: null });
+    expect(audit.append.mock.calls.some(call => call[2] === "agent.settings_changed")).toBe(false);
+    const allowed = await app.inject({ method: "PUT", url: `/api/agents/${row.id}/settings`, headers: { ...headers, cookie: `${SESSION_COOKIE}=owner-cookie` }, payload });
+    expect(allowed.statusCode).toBe(200);
+    expect(row).toMatchObject({ look_shape: "scallop", look_colour: "ink" });
+    expect(audit.append).toHaveBeenCalledWith(row.id, "owner", "agent.settings_changed", payload);
   });
   it("reports every agent signed in, a new one included, once the shared Claude sign-in exists", async () => {
     const { app, headers, db, row } = await httpFixture();

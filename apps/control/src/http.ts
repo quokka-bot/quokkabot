@@ -7,6 +7,7 @@ import { join, normalize } from "node:path";
 import {
   AddDomainRuleRequest,
   AiConsentRequest,
+  AgentLook,
   AgentSettingsRequest,
   CreateAgentRequest,
   type AgentSummary,
@@ -638,9 +639,9 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
 
   async function agentSummary(agentId: string): Promise<AgentSummary> {
     await slots.require(agentId);
-    const row = await one<{ id: string; idx: number; generation: number; removing_at: Date | null; name: string; model: string; effort: string; cli_signed_in: "yes" | "no" | "unknown"; cli_account: string | null; cli_plan: string | null }>(
+    const row = await one<{ id: string; idx: number; generation: number; removing_at: Date | null; name: string; model: string; effort: string; cli_signed_in: "yes" | "no" | "unknown"; cli_account: string | null; cli_plan: string | null; look_shape: string | null; look_colour: string | null }>(
       db,
-      "select id, idx, generation, removing_at, name, model, effort, cli_signed_in, cli_account, cli_plan from agents where id = $1 and added_at is not null",
+      "select id, idx, generation, removing_at, name, model, effort, cli_signed_in, cli_account, cli_plan, look_shape, look_colour from agents where id = $1 and added_at is not null",
       [agentId],
     );
     const shared = await sharedSignIn(db);
@@ -667,6 +668,7 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
       activeTaskId: (active?.id ?? null) as AgentSummary["activeTaskId"],
       waitingOnOwner: Number(waiting.n),
       aiConsent: await consents.view(db, agentId),
+      look: row.look_shape === null ? null : AgentLook.parse({ shape: row.look_shape, colour: row.look_colour }),
     };
   }
 
@@ -699,7 +701,12 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
     await requireSession(request);
     const agentId = await agentParam(request.params.agentId);
     const body = parse(AgentSettingsRequest, request.body);
-    await db.query("update agents set model = coalesce($2, model), effort = coalesce($3, effort), name = coalesce($4, name) where id = $1", [agentId, body.model ?? null, body.effort ?? null, body.name ?? null]);
+    // Each omitted field keeps its value; a null look goes back to the slot's look.
+    await db.query(
+      `update agents set model = coalesce($2, model), effort = coalesce($3, effort), name = coalesce($4, name),
+         look_shape = case when $5::boolean then $6 else look_shape end, look_colour = case when $5::boolean then $7 else look_colour end
+       where id = $1`,
+      [agentId, body.model ?? null, body.effort ?? null, body.name ?? null, body.look !== undefined, body.look?.shape ?? null, body.look?.colour ?? null]);
     await audit.append(agentId, "owner", "agent.settings_changed", { ...body });
     return agentSummary(agentId);
   });

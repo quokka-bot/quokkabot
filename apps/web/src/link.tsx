@@ -4,7 +4,7 @@ import { startAuthentication } from "@simplewebauthn/browser";
 import { DesktopLinkDecideRequest } from "@quokkabot/shared";
 import { api } from "./api.js";
 import { ErrorLine, useAction } from "./ui.js";
-import { AgentAvatar } from "./avatar.js";
+import { ProductMark } from "./avatar.js";
 
 // The code waiting for approval, kept across a sign-in; Settings also puts a phone's code here before opening /link.
 export const LINK_CODE_KEY = "quokkabot:desktop-link-code";
@@ -45,7 +45,7 @@ export function DesktopLink() {
     sessionStorage.removeItem(LINK_CODE_KEY);
   });
   return <div className="auth-card">
-    <AgentAvatar index={0} size={64} />
+    <ProductMark size={64} />
     <h1>{app === null ? "Connect an app" : `Connect the ${appName}`}</h1>
     {done ? <p role="status">{done === "approved" ? `Approved. Return to the ${appName}.` : "Refused."}</p> : !valid ? <ErrorLine error={new Error("This code is missing or invalid. Start again in the app.")} /> : <>
       <ErrorLine error={me.error} /><ErrorLine error={pending.error} />

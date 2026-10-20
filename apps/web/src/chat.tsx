@@ -28,9 +28,9 @@ function Steps({ lines }: { lines: StepLine[] }) {
   </div>;
 }
 
-function Working({ index, status }: { index: number; status: string }) {
+function Working({ agent, working, status }: { agent: AgentSummary; working: boolean; status: string }) {
   return <div className="working" role="status" aria-label={status}>
-    <span className="working-face"><AgentAvatar index={index} size={30} /></span>
+    <span className="working-face"><AgentAvatar agent={agent} size={30} working={working} /></span>
     <span className="shimmer">{status}</span>
   </div>;
 }
@@ -86,8 +86,8 @@ function Bubble({ from, children, live = false, reaction, reactTo }: {
   </div></div>;
 }
 
-function CurrentTask({ agent, index, task, snapshotSeq, openRequests, earliestAt, stream }: {
-  agent: AgentSummary; index: number; task: Task; snapshotSeq: number; openRequests: OwnerRequest[]; earliestAt: string | null; stream: ReturnType<typeof useTaskStream>;
+function CurrentTask({ agent, task, snapshotSeq, openRequests, earliestAt, stream }: {
+  agent: AgentSummary; task: Task; snapshotSeq: number; openRequests: OwnerRequest[]; earliestAt: string | null; stream: ReturnType<typeof useTaskStream>;
 }) {
   const interval = usePollInterval();
   const inbox = useQuery({ queryKey: ["inbox"], queryFn: api.inbox, refetchInterval: interval });
@@ -138,7 +138,7 @@ function CurrentTask({ agent, index, task, snapshotSeq, openRequests, earliestAt
         }
       }
     })}
-    {busy && !(items.at(-1)?.kind === "agent" && (items.at(-1) as { live?: boolean }).live) && <Working index={index} status={workingStatus(currentSteps)} />}
+    {busy && !(items.at(-1)?.kind === "agent" && (items.at(-1) as { live?: boolean }).live) && <Working agent={agent} working={liveState.state === "running"} status={workingStatus(currentSteps)} />}
     {unplacedRequests.map(request => <RequestCard key={request.id} request={request} agentId={agent.id} />)}
     {unplacedSites.map(request => <DomainRequestCard key={request.id} request={request} />)}
     {task.result && task.result.files.length > 0 && <div className="attachments">{task.result.files.map(file => <div key={file.fileId} className="attachment">
@@ -241,7 +241,7 @@ export function Composer({ agent, task, ready, openQuestion, waiting, startNew, 
   </form>;
 }
 
-export function AgentChat({ agent, index }: { agent: AgentSummary; index: number }) {
+export function AgentChat({ agent }: { agent: AgentSummary }) {
   const interval = usePollInterval();
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -270,11 +270,11 @@ export function AgentChat({ agent, index }: { agent: AgentSummary; index: number
     <div ref={scroll.scroller} className="chat-scroll" aria-busy={scroll.opening}>
       <div ref={scroll.content} className={`chat-column${scroll.opening ? " opening" : ""}`}>
         <ErrorLine error={tasks.error} />
-        {list.length === 0 && !tasks.isPending && (agent.cliSignedIn !== "yes" ? <ClaudeSignInCard key={agent.id} agent={agent} /> : <div className="chat-empty"><AgentAvatar index={index} size={72} /><h1>{agent.name}</h1><p>Give {agent.name} a task. It works on its own computer and asks you when it needs something.</p></div>)}
+        {list.length === 0 && !tasks.isPending && (agent.cliSignedIn !== "yes" ? <ClaudeSignInCard key={agent.id} agent={agent} /> : <div className="chat-empty"><AgentAvatar agent={agent} size={72} working={agent.activeTaskId !== null} /><h1>{agent.name}</h1><p>Give {agent.name} a task. It works on its own computer and asks you when it needs something.</p></div>)}
         {earlier.map((task, i) => <EarlierTask key={task.id} task={task} onOpen={() => open(task.id)} divider={i === 0 || Date.parse(task.createdAt) - Date.parse(earlier[i - 1]?.updatedAt ?? task.createdAt) > DIVIDER_GAP_MS} />)}
         {wantsNew && list.length > 0 && <p className="notice info">New task</p>}
         <ErrorLine error={detail.error} />
-        {current && detail.data && <CurrentTask key={current.id} agent={agent} index={index} task={current} snapshotSeq={detail.data.lastSeq} openRequests={openRequests} earliestAt={earlier.at(-1)?.updatedAt ?? null} stream={stream} />}
+        {current && detail.data && <CurrentTask key={current.id} agent={agent} task={current} snapshotSeq={detail.data.lastSeq} openRequests={openRequests} earliestAt={earlier.at(-1)?.updatedAt ?? null} stream={stream} />}
         {position > 0 && <p className="notice info"><Link to={`/agents/${agent.id}`}>Back to the latest task</Link></p>}
       </div>
     </div>

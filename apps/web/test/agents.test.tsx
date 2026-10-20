@@ -4,7 +4,6 @@ import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSummary } from "@quokkabot/shared";
 import { App } from "../src/app.js";
-import { agentColour } from "../src/avatar.js";
 import { agentCapacityMessage } from "../src/agent-dialog.js";
 import { agent, agentId, json, me, taskId } from "./fixtures.js";
 
@@ -182,9 +181,36 @@ describe("agent lifecycle UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(screen.getByLabelText("Route").textContent).toBe(`/agents/${secondId}`));
   });
-  it("keeps every slot's avatar colour distinct", () => {
-    expect(new Set(Array.from({ length: 99 }, (_, index) => agentColour(index + 1))).size).toBe(99);
-    expect(agentColour(2)).not.toBe(agentColour(1));
+  it("gives each agent its own look, keeps it through a rename and moves only a working agent", async () => {
+    agents = [{ ...agent }, { ...second, activeTaskId: taskId as AgentSummary["activeTaskId"] }];
+    open(`/agents/${agentId}/settings`);
+    const list = await screen.findByRole("navigation", { name: "Agents" });
+    const avatarOf = (name: string) => within(list).getByRole("link", { name: new RegExp(name) }).querySelector<SVGSVGElement>("svg.agent-avatar");
+    await waitFor(() => expect(avatarOf("Agent 2")).not.toBeNull());
+    expect(avatarOf("Office")?.dataset).toMatchObject({ shape: "blob", colour: "violet", state: "idle" });
+    expect(avatarOf("Agent 2")?.dataset).toMatchObject({ shape: "ghost", colour: "red", state: "working" });
+    fireEvent.change(await screen.findByRole("textbox", { name: "Name" }), { target: { value: "Renamed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByText("Settings saved.");
+    const request = fetchMock.mock.calls.find(([url, init]) => url === `/api/agents/${agentId}/settings` && init?.method === "PUT");
+    // An untouched picker sends no look: the agent keeps following its slot.
+    expect(JSON.parse(String(request?.[1]?.body))).not.toHaveProperty("look");
+    await waitFor(() => expect(avatarOf("Renamed")?.dataset).toMatchObject({ shape: "blob", colour: "violet" }));
+  });
+  it("saves the shape and colour the owner picks and draws the agent with them", async () => {
+    open(`/agents/${agentId}/settings`);
+    const shapes = await screen.findByRole("group", { name: "Shape" });
+    fireEvent.click(within(shapes).getByRole("radio", { name: "Drop" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Colour" })).getByRole("radio", { name: "Teal" }));
+    // Each colour option shows the picked shape.
+    expect(within(screen.getByRole("group", { name: "Colour" })).getByRole("radio", { name: "Red" }).closest("label")?.querySelector<SVGSVGElement>("svg")?.dataset.shape).toBe("drop");
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByText("Settings saved.");
+    const request = fetchMock.mock.calls.find(([url, init]) => url === `/api/agents/${agentId}/settings` && init?.method === "PUT");
+    expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({ look: { shape: "drop", colour: "teal" } });
+    const row = within(screen.getByRole("navigation", { name: "Agents" })).getByRole("link", { name: /Office/ });
+    await waitFor(() => expect(row.querySelector("svg.agent-avatar")?.getAttribute("data-shape")).toBe("drop"));
+    expect(row.querySelector("svg.agent-avatar")?.getAttribute("data-colour")).toBe("teal");
   });
 });
 

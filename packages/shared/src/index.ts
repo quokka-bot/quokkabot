@@ -1,4 +1,5 @@
 export * from "./adapter.js";
+export * from "./agent-look.js";
 export * from "./ai-consent.js";
 export * from "./api.js";
 export * from "./audit.js";

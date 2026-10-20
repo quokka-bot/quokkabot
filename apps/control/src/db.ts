@@ -627,6 +627,15 @@ const MIGRATIONS: Migration[] = [
     id: 22,
     data: migrateOwnerName,
   },
+  {
+    id: 23,
+    sql: () => `
+      -- The owner's pick of an agent's look in Agent settings: both null (the apps derive it from the slot) or both set.
+      -- The API accepts only the names in packages/shared/src/agent-look.ts. A new occupant of the slot starts with none.
+      alter table agents add column look_shape text, add column look_colour text;
+      alter table agents add constraint agents_look_pair check ((look_shape is null) = (look_colour is null));
+    `,
+  },
 ];
 
 export async function migrate(config: ControlConfig): Promise<void> {

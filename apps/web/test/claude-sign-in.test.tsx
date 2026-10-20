@@ -129,7 +129,7 @@ describe("sign-in placement in chat", () => {
 
   it("replaces the greeting for a signed-out new agent and leaves the composer usable", async () => {
     vi.spyOn(api, "tasks").mockResolvedValue({ tasks: [], nextBefore: null });
-    mount(<AgentChat agent={signedOut} index={0} />);
+    mount(<AgentChat agent={signedOut} />);
     expect(await screen.findByRole("region", { name: "Sign in to Claude" })).not.toBeNull();
     expect(screen.queryByText(/Give Office a task/)).toBeNull();
     expect(screen.getByRole("textbox", { name: "New task" }).hasAttribute("disabled")).toBe(false);
@@ -139,10 +139,10 @@ describe("sign-in placement in chat", () => {
     const failed = { ...task, state: "failed" as const, error: "Claude Code is signed out. Sign in to Claude, then try again." };
     vi.spyOn(api, "tasks").mockResolvedValue({ tasks: [failed], nextBefore: null });
     vi.spyOn(api, "task").mockResolvedValue({ ...detail, task: failed });
-    const view = mount(<AgentChat agent={signedOut} index={0} />);
+    const view = mount(<AgentChat agent={signedOut} />);
     expect(await screen.findByRole("region", { name: "Sign in to Claude" })).not.toBeNull();
     view.unmount();
-    mount(<AgentChat agent={{ ...signedOut, cliSignedIn: "yes" } as AgentSummary} index={0} />);
+    mount(<AgentChat agent={{ ...signedOut, cliSignedIn: "yes" } as AgentSummary} />);
     expect(await screen.findByRole("button", { name: "Try again" })).not.toBeNull();
     expect(screen.queryByRole("region", { name: "Sign in to Claude" })).toBeNull();
   });

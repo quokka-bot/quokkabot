@@ -35,9 +35,9 @@ function Steps({ lines }: { lines: StepLine[] }) {
   </View>;
 }
 
-function Working({ index, status }: { index: number; status: string }) {
+function Working({ agent, working, status }: { agent: AgentSummary; working: boolean; status: string }) {
   return <View accessibilityRole="text" accessibilityLabel={status} accessibilityLiveRegion="polite" style={styles.working}>
-    <AgentAvatar index={index} size={30} /><Text style={[styles.meta, styles.flex]}>{status}</Text>
+    <AgentAvatar agent={agent} size={30} working={working} /><Text style={[styles.meta, styles.flex]}>{status}</Text>
   </View>;
 }
 
@@ -105,7 +105,7 @@ function CurrentTask({ agent, task, openRequests, earliestAt, stream, inbox }: {
         }
       }
     })}
-    {busy && !(lastItem?.kind === "agent" && lastItem.live) && <Working index={agent.index} status={workingStatus(currentSteps)} />}
+    {busy && !(lastItem?.kind === "agent" && lastItem.live) && <Working agent={agent} working={task.state === "running"} status={workingStatus(currentSteps)} />}
     {unplacedRequests.map(request => <RequestCard key={request.id} request={request} agentId={agent.id} />)}
     {unplacedSites.map(request => <DomainRequestCard key={request.id} request={request} agentId={agent.id} />)}
     {task.result && task.result.files.length > 0 && <View style={styles.files}>
@@ -210,7 +210,7 @@ function Chat({ agent }: { agent: AgentSummary }) {
       pointerEvents={scroll.opening ? "none" : "auto"} accessibilityElementsHidden={scroll.opening} accessibilityLabel={`${agent.name} chat`}>
       <ErrorLine error={tasks.error ?? inbox.error} />
       {list.length === 0 && !tasks.isPending && !tasks.error && (agent.cliSignedIn !== "yes" ? <Notice>{SIGNED_OUT}</Notice> : <View style={styles.empty}>
-        <AgentAvatar index={agent.index} size={72} /><Text style={styles.name}>{agent.name}</Text>
+        <AgentAvatar agent={agent} size={72} working={agent.activeTaskId !== null} /><Text style={styles.name}>{agent.name}</Text>
         <Text style={styles.intro}>Give {agent.name} a task. It works on its own computer and asks you when it needs something.</Text>
       </View>)}
       {earlier.map((task, i) => <EarlierTask key={task.id} agentId={agent.id} task={task} onOpen={() => setSelection(task.id)}

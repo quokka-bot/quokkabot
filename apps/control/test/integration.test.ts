@@ -1371,6 +1371,10 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     await api("PUT", `/api/agents/${AGENT2}/settings`, { model: "claude-sonnet-5-5", effort: "high" });
     const nameOnly = await api("PUT", `/api/agents/${AGENT2}/settings`, { name: "Ledger" });
     expect(nameOnly.body).toMatchObject({ name: "Ledger", model: "claude-sonnet-5-5", effort: "high" });
+    const looked = await api("PUT", `/api/agents/${AGENT2}/settings`, { look: { shape: "ghost", colour: "teal" } });
+    expect(looked.body).toMatchObject({ name: "Ledger", model: "claude-sonnet-5-5", effort: "high", look: { shape: "ghost", colour: "teal" } });
+    expect((await api("PUT", `/api/agents/${AGENT2}/settings`, { name: "Ledger" })).body.look).toEqual({ shape: "ghost", colour: "teal" });
+    expect((await api("PUT", `/api/agents/${AGENT2}/settings`, { look: { shape: "ghost", colour: "#00ff00" } })).status).toBe(400);
     const saved = await api("POST", `/api/agents/${AGENT2}/logins`, { name: "Vendor", sites: ["vendor.example.com"], username: "owner", password: "private-password" });
     expect(saved.status).toBe(200);
     const ticket = await api("POST", `/api/agents/${AGENT2}/view-ticket`, {});
@@ -1386,6 +1390,10 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     await slotClient.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.2:${mcpPort}/mcp`), { requestInit: { headers: { authorization: `Bearer ${token}` } } }) as never);
     expect((await slotClient.listTools()).tools.length).toBeGreaterThan(0);
     await slotClient.close();
+    // The agent's own token cannot change its look through the owner's API.
+    const asAgent = await api("PUT", `/api/agents/${AGENT2}/settings`, { model: "claude-opus-5-5", effort: "xhigh", look: { shape: "cloud", colour: "red" } }, { cookie: false, origin: null, headers: { authorization: `Bearer ${token}` } });
+    expect(asAgent.status).toBe(401);
+    expect((await api("GET", `/api/agents/${AGENT2}`)).body.look).toEqual({ shape: "ghost", colour: "teal" });
     await db.query("update runs set state = 'exited', finalized = true, token_revoked = true where id = $1", [runId]);
     const events = new TaskEvents(db);
     await events.append(db, taskId, { kind: "assistant_text", text: "Private old message" });
@@ -1399,7 +1407,7 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     for (const table of ["task_events", "message_reactions", "owner_requests"]) expect((await db.query(`select count(*)::int as n from ${table} where task_id = $1`, [taskId])).rows[0].n).toBe(0);
     expect((await db.query("select count(*)::int as n from audit_events where agent_id = $1", [AGENT2])).rows[0].n).toBeGreaterThan(auditBefore.rows[0].n);
     const recreated = await api("POST", "/api/agents", { name: "Fresh agent" });
-    expect(recreated.body).toMatchObject({ id: AGENT2, name: "Fresh agent", cliSignedIn: "no" });
+    expect(recreated.body).toMatchObject({ id: AGENT2, name: "Fresh agent", cliSignedIn: "no", look: null });
     const currentAudit = await api("GET", `/api/agents/${AGENT2}/audit`);
     expect(currentAudit.body.events.map((event: { type: string }) => event.type)).toEqual(["agent.added"]);
     expect((await api("GET", `/api/agents/${AGENT2}/audit/verify`)).body).toMatchObject({ ok: true });
