@@ -158,6 +158,8 @@ export function AgentChat({ agentId }: { agentId: string }) {
   // Renaming sends nothing to the AI provider, so it asks no permission.
   const rename = useAction(agentId, async (name: string) => {
     const updated = await api.rename(agentId, name);
+    // A poll sent before the save would otherwise land after this write with the old name.
+    await Promise.all([client.cancelQueries({ queryKey: [connection.origin, "agent", agentId] }), client.cancelQueries({ queryKey: [connection.origin, "agents"], exact: true })]);
     client.setQueryData([connection.origin, "agent", agentId], updated);
     client.setQueryData<AgentsResponse>([connection.origin, "agents"], list => withAgent(list, updated));
     return updated;

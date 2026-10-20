@@ -16,6 +16,8 @@ let client: QueryClient;
 // Agent reads that never answer, to show what the window shows before its next poll.
 let holdAgentReads: boolean;
 let settingsFailure: { status: number; code: string; message: string } | null;
+// The next read of the first agent waits until the test answers it, like a poll still on its way.
+let lateRead: { armed: boolean; answer?: (response: Response) => void };
 const fetchMock = vi.fn<typeof fetch>();
 function Location() { const location = useLocation(); return <output aria-label="Route">{location.pathname}</output>; }
 function open(path = `/agents/${agentId}`) {
@@ -32,12 +34,13 @@ async function openNewAgent(which: "top" | "list" = "list") {
   fireEvent.click(button);
 }
 beforeEach(() => {
-  agents = [{ ...agent }]; total = 3; holdAgentReads = false; settingsFailure = null;
+  agents = [{ ...agent }]; total = 3; holdAgentReads = false; settingsFailure = null; lateRead = { armed: false };
   localStorage.clear();
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (input, init) => {
     const path = String(input);
     const method = init?.method ?? "GET";
+    if (lateRead.armed && method === "GET" && path === `/api/agents/${agentId}`) { lateRead.armed = false; return new Promise<Response>(resolve => { lateRead.answer = resolve; }); }
     if (holdAgentReads && method === "GET" && /^\/api\/agents(\/[^/]+)?$/.test(path)) return new Promise<Response>(() => undefined);
     if (path === "/api/me") return json(me);
     if (path === "/api/agents") {
@@ -213,6 +216,36 @@ describe("renaming in the details panel", () => {
     expect(screen.getByRole("textbox", { name: "New task" }).getAttribute("placeholder")).toBe("New task for Invoices");
     expect(screen.getByRole("status", { name: "" }).textContent).toBe("Name saved.");
   });
+  it("sends one request when Enter is followed by the field losing focus", async () => {
+    open();
+    const field = await startRename();
+    fireEvent.change(field, { target: { value: "Invoices" } });
+    fireEvent.submit(field);
+    fireEvent.blur(field);
+    const renamed = await screen.findByRole("button", { name: "Rename Invoices" });
+    expect(document.activeElement).toBe(renamed);
+    expect(settingsRequests()).toHaveLength(1);
+  });
+  it("keeps the new name when a poll sent before the save answers after it", async () => {
+    open();
+    const field = await startRename();
+    lateRead.armed = true;
+    void client.refetchQueries({ queryKey: ["agent", agentId] });
+    await waitFor(() => expect(lateRead.answer).toBeDefined());
+    // The old reply arrives the moment the new name is written.
+    const stop = client.getQueryCache().subscribe(() => {
+      if (client.getQueryData<AgentSummary>(["agent", agentId])?.name !== "Invoices") return;
+      // A reply whose body is already read, so it lands within a few microtasks of the write.
+      stop(); lateRead.answer?.({ status: 200, ok: true, json: async () => ({ ...agent, name: "Office" }) } as Response);
+    });
+    fireEvent.change(field, { target: { value: "Invoices" } });
+    holdAgentReads = true;
+    fireEvent.submit(field);
+    await screen.findByRole("button", { name: "Rename Invoices" });
+    await act(() => new Promise(resolve => setTimeout(resolve, 50)));
+    expect(document.querySelector(".title-pill")?.textContent).toBe("Invoices");
+    expect(client.getQueryData<AgentSummary>(["agent", agentId])?.name).toBe("Invoices");
+  });
   it("saves when the field loses focus and leaves focus where it went", async () => {
     open();
     const field = await startRename();
@@ -275,6 +308,25 @@ describe("renaming in the details panel", () => {
     expect(name.value).toBe("Invoices");
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await screen.findByText("Settings saved.");
-    expect(JSON.parse(String(settingsRequests()[1]?.[1]?.body))).toMatchObject({ name: "Invoices" });
+    expect(JSON.parse(String(settingsRequests()[1]?.[1]?.body))).not.toHaveProperty("name");
+    expect(within(screen.getByRole("navigation", { name: "Agents" })).getByText("Invoices")).toBeTruthy();
+  });
+  it("keeps a panel rename when Settings saves again after an earlier name change there", async () => {
+    open(`/agents/${agentId}/settings`);
+    const name = await screen.findByRole<HTMLInputElement>("textbox", { name: "Name" });
+    fireEvent.change(name, { target: { value: "Billing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByRole("button", { name: "Rename Billing" });
+    fireEvent.click(screen.getByRole("button", { name: "Rename Billing" }));
+    const field = screen.getByRole("textbox", { name: "Agent name" });
+    fireEvent.change(field, { target: { value: "Invoices" } });
+    fireEvent.submit(field);
+    await screen.findByRole("button", { name: "Rename Invoices" });
+    expect(name.value).toBe("Invoices");
+    fireEvent.change(screen.getByRole("combobox", { name: "Effort" }), { target: { value: "low" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(settingsRequests()).toHaveLength(3));
+    expect(JSON.parse(String(settingsRequests()[2]?.[1]?.body))).toEqual({ model: agent.model, effort: "low" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Rename Invoices" })).toBeTruthy());
   });
 });

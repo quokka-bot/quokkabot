@@ -1,13 +1,20 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { agentNameEdit, withAgent } from "@quokkabot/client";
 import type { AgentsResponse, AgentSummary } from "@quokkabot/shared";
 import { api, errorMessage } from "./api.js";
 import { useAction } from "./ui.js";
 
+// Writes the server's reply into the cached agent and agents list, so every place that shows the agent shows the change
+// before the next poll. A poll sent before the save would otherwise land after this write with the old values.
+export async function storeAgent(client: QueryClient, updated: AgentSummary): Promise<void> {
+  await Promise.all([client.cancelQueries({ queryKey: ["agent", updated.id] }), client.cancelQueries({ queryKey: ["agents"], exact: true })]);
+  client.setQueryData(["agent", updated.id], updated);
+  client.setQueryData<AgentsResponse>(["agents"], list => withAgent(list, updated));
+}
+
 // The agent's name at the top of its details panel. Clicking it opens a field in its place: Enter or leaving the field
-// saves, Escape keeps the old name. The server's reply goes straight into the cached agent and agents list, so the
-// sidebar, the title and the composer show the new name before their next poll.
+// saves, Escape keeps the old name.
 export function AgentNameHeading({ agent }: { agent: AgentSummary }) {
   const client = useQueryClient();
   const [draft, setDraft] = useState<string | null>(null);
@@ -21,11 +28,7 @@ export function AgentNameHeading({ agent }: { agent: AgentSummary }) {
   const button = useRef<HTMLButtonElement>(null);
   const errorId = useId();
   const rename = useAction(async (name: string) => {
-    const updated = await api.rename(agent.id, name);
-    // useAction then refetches everything, which drops any poll sent before the save with the old name.
-    client.setQueryData(["agent", agent.id], updated);
-    client.setQueryData<AgentsResponse>(["agents"], list => withAgent(list, updated));
-    return updated;
+    await storeAgent(client, await api.rename(agent.id, name));
   });
   const open = draft !== null;
   useEffect(() => {
