@@ -109,6 +109,8 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .agent-row-text .waiting-preview { color: var(--purple); font-weight: 500; }
 .badge-dot { position: absolute; right: -1px; bottom: 1px; width: 11px; height: 11px; border-radius: 50%; background: #f59e0b; border: 2px solid var(--sidebar); }
 .sidebar-empty { padding: 12px; color: var(--muted); }
+.desktop-update { display: grid; gap: 8px; margin: 10px 14px 0; padding: 12px; border: 1px solid var(--accent); border-radius: 14px; background: var(--card); box-shadow: var(--shadow); font-size: 13px; }
+.desktop-update .error { margin: 0; }
 .sidebar-bottom { display: flex; align-items: center; gap: 10px; padding: 12px 14px 16px; }
 .sidebar-bottom .pill { flex: 1; }
 .sidebar-bottom .pill.active { border-color: var(--text); }
