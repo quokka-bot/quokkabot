@@ -11,8 +11,8 @@ export const SUPPORT_EMAIL = "support@quokkabot.com";
 // The Mac app is served by the project's own server until releases move to GitHub. public/_redirects sends
 // /download/mac here; a test keeps the two in step.
 export const MAC_DOWNLOAD = {
-  version: "0.2.0",
-  url: "https://app.quokkabot.com/desktop/QuokkaBot-0.2.0-arm64.dmg",
+  version: "0.2.1",
+  url: "https://app.quokkabot.com/desktop/QuokkaBot-0.2.1-arm64.dmg",
 } as const;
 
 // Who runs quokkabot.com, the support address and the apps' store listings. The privacy policy names them because
