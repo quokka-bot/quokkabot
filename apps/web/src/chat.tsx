@@ -4,6 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router";
 import { REACTION_EMOJIS, TERMINAL_TASK_STATES, type AgentSummary, type DomainRequestView, type OwnerRequest, type ReactionEmoji, type Task } from "@quokkabot/shared";
 import { askedLine, chatItems, listSites, liveTask, messageReactions, sitesLine, timeLabel, workingStatus, type StepLine } from "@quokkabot/client";
 import { IMAGE_ACCEPT, ImageChips, OwnerImages, useChatImages } from "./chat-images.js";
+import { AiConsentCard, aiConsentOf, needsAiConsent } from "./ai-consent.js";
 import { api } from "./api.js";
 import { AgentAvatar } from "./avatar.js";
 import { ClaudeSignInCard } from "./claude-sign-in.js";
@@ -189,9 +190,12 @@ export function Composer({ agent, task, ready, openQuestion, waiting, startNew, 
   const running = active && !waiting;
   const draft = useChatImages(agent.id, running || !ready || sendingImages);
   useEffect(() => { if (params.get("new") === "1") input.current?.focus(); }, [params]);
+  // Open when a send needs the owner's permission for the AI provider first; the draft stays for the next send.
+  const [askConsent, setAskConsent] = useState(false);
   const send = useAction(async () => {
     const message = text.trim();
     if (sending.current || running || !ready || draft.failed || (!message && draft.images.length === 0)) return;
+    if (!aiConsentOf(agent).allowed) { setAskConsent(true); return; }
     sending.current = true;
     setSendingImages(true);
     try {
@@ -203,12 +207,17 @@ export function Composer({ agent, task, ready, openQuestion, waiting, startNew, 
       setText("");
       draft.clear();
       draftKey.current = crypto.randomUUID();
+    } catch (error) {
+      // Another app withdrew the permission after this page last loaded the agent.
+      if (needsAiConsent(error)) { setAskConsent(true); return; }
+      throw error;
     } finally { sending.current = false; setSendingImages(false); }
   });
   const stop = useAction(async () => { if (task) await api.cancel(task.id); });
   const placeholder = active && waiting ? (openQuestion?.kind === "question" ? `Answer ${agent.name}` : `Reply to ${agent.name}`) : running ? (task.blockedReason ? `${agent.name} is waiting for you above` : `${agent.name} is working…`) : task === null ? `New task for ${agent.name}` : `Message ${agent.name}`;
   return <form className="composer" data-hold-reload={draft.images.length > 0 ? "" : undefined} onSubmit={event => { event.preventDefault(); if (!send.isPending) send.mutate(); }}>
     {draft.dragging && <div className="chat-drop-overlay">Drop images here</div>}
+    {askConsent && <AiConsentCard agent={agent} onClose={() => { setAskConsent(false); input.current?.focus(); }} />}
     <ErrorLine error={send.error ?? stop.error} />
     <ImageChips draft={draft} disabled={send.isPending} />
     <input ref={picker} type="file" className="image-file-input" aria-label="Choose images" accept={IMAGE_ACCEPT} multiple

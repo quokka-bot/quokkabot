@@ -6,7 +6,7 @@ import { startAuthentication, startRegistration } from "@simplewebauthn/browser"
 import { REACTION_EMOJIS, type TaskEvent } from "@quokkabot/shared";
 import { App } from "../src/app.js";
 import { api } from "../src/api.js";
-import { agent, agentId, at, detail, domainRequest, domainRequestId, emptyDomains, hash, json, me, ownerRequest, run, task, taskId } from "./fixtures.js";
+import { agent, agentId, at, detail, domainRequest, domainRequestId, emptyDomains, hash, json, me, ownerRequest, run, task, taskId, withdrawnConsent } from "./fixtures.js";
 
 vi.mock("@simplewebauthn/browser", () => ({ startAuthentication: vi.fn(), startRegistration: vi.fn() }));
 
@@ -480,6 +480,47 @@ describe("chat composer", () => {
     expect(requestBody(`/api/tasks/${taskId}/message`)).toEqual({ text: "Also collect November", attachmentIds: [] });
     expect(fetchMock.mock.calls.some(([url, init]) => url === `/api/agents/${agentId}/tasks` && init?.method === "POST")).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/reply"))).toBe(false);
+  });
+
+  it("asks for the AI provider permission when it is off, keeps the draft and sends after Allow", async () => {
+    let consent = withdrawnConsent;
+    handler = (path, init) => {
+      if (path === "/api/agents") return json({ agents: [{ ...agent, aiConsent: consent }], capacity: { used: 1, total: 2 } });
+      if (path === `/api/agents/${agentId}`) return json({ ...agent, aiConsent: consent });
+      if (path === `/api/agents/${agentId}/ai-consent` && init?.method === "PUT") { consent = { ...withdrawnConsent, state: "granted", allowed: true, changedBy: { client: "browser", deviceName: "Browser" } }; return json(consent); }
+      if (path === `/api/tasks/${taskId}`) return json({ ...detail, task: { ...task, state: "completed" } });
+      if (path === `/api/tasks/${taskId}/message`) return json(task);
+      return undefined;
+    };
+    await openChat();
+    const composer = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message" });
+    fireEvent.change(composer, { target: { value: "Also collect November" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByRole("heading", { name: "Office works with Claude by Anthropic" });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/message"))).toBe(false);
+    expect(composer.value).toBe("Also collect November");
+    fireEvent.click(screen.getByRole("button", { name: "Allow for Office" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Office works with Claude by Anthropic" })).toBeNull());
+    expect(requestBody(`/api/agents/${agentId}/ai-consent`, "PUT")).toEqual({ allow: true, provider: "anthropic", disclosureVersion: agent.aiConsent?.disclosureVersion, generation: agent.generation });
+    await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Send" }).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(composer.value).toBe(""));
+    expect(requestBody(`/api/tasks/${taskId}/message`)).toEqual({ text: "Also collect November", attachmentIds: [] });
+  });
+
+  it("opens the permission card when the server refuses a send for consent another app withdrew", async () => {
+    handler = path => {
+      if (path === `/api/tasks/${taskId}`) return json({ ...detail, task: { ...task, state: "completed" } });
+      if (path === `/api/tasks/${taskId}/message`) return json({ error: { code: "ai_consent_required", message: "Sending to Anthropic is off for this agent. Turn it on to send." } }, 403);
+      return undefined;
+    };
+    await openChat();
+    const composer = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "Message" });
+    fireEvent.change(composer, { target: { value: "Go on" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByRole("heading", { name: "Office works with Claude by Anthropic" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(composer.value).toBe("Go on");
   });
 
   it("keeps Shift+Enter for a newline and sends on Enter", async () => {

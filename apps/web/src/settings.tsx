@@ -5,6 +5,7 @@ import { DesktopLinkDecideRequest, Effort, type AgentSummary, type SessionView }
 import { encode } from "uqr";
 import { api } from "./api.js";
 import { RemoveAgent } from "./agent-dialog.js";
+import { AiConsentSetting } from "./ai-consent.js";
 import { LINK_CODE_KEY } from "./link.js";
 import { dateLabel, ErrorLine, useAction, usePollInterval } from "./ui.js";
 
@@ -107,6 +108,7 @@ export function Settings({ agent }: { agent: AgentSummary }) {
       <label>Effort<select value={effort} onChange={event => setEffort(Effort.parse(event.target.value))}>{Effort.options.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
       <button className="primary" disabled={save.isPending}>Save settings</button><ErrorLine error={save.error} />{save.isSuccess && <p role="status">Settings saved.</p>}
     </form>
+    <AiConsentSetting agent={agent} />
     <OwnerSettings />
     <RemoveAgent agent={agent} />
   </>;

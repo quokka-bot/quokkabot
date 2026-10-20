@@ -1,52 +1,29 @@
 import { useSyncExternalStore } from "react";
 import { File, Paths } from "expo-file-system";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { StyleSheet, Switch, Text, View } from "react-native";
+import { AGENT_PROVIDER, AI_CONSENT_ERROR } from "@quokkabot/shared";
+import { ApiFailure, type Api } from "./api";
+import { consentVersion, forgetConsent, hasConsent, PROVIDER, subscribeConsent } from "./consent-store";
 import { useSignedIn } from "./session";
+import { ErrorLine } from "./ui/kit";
 import { colors } from "./ui/theme";
 
+export { hasConsent, PROVIDER } from "./consent-store";
+
 // Permission to send to an agent's AI provider (App Review 5.1.2(i)): asked before this phone sends the agent
-// anything (a task, a reply, a login, a site decision, a hand-back), per server and agent. A new disclosure version
-// asks again. Kept in the app's folder, not the Keychain: it holds no secret.
-export const DISCLOSURE_VERSION = "2026-10-19";
-export const PROVIDER = { name: "Claude by Anthropic", company: "Anthropic", privacyUrl: "https://www.anthropic.com/legal/privacy" } as const;
+// anything (a task, a reply, a login, a site decision, a hand-back). The answer is the server's record, shared with the
+// web and Mac apps; withdrawing it on any of them stops the agent's queued and running tasks on the server.
 
-const file = new File(Paths.document, "ai-consent.json");
-let granted: Record<string, string> = read();
-const listeners = new Set<() => void>();
-
-// A damaged file (an interrupted write) means no recorded consent: the phone asks again before sending anything.
-function read(): Record<string, string> {
-  if (!file.exists) return {};
-  let parsed: unknown;
-  try { parsed = JSON.parse(file.textSync()); } catch { parsed = null; }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
-  return Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === "string"));
-}
-function write(next: Record<string, string>): void {
-  if (!file.exists) file.create();
-  file.write(JSON.stringify(next));
-  granted = next;
-  for (const listener of listeners) listener();
-}
-const key = (origin: string, agentId: string) => `${origin}|${agentId}`;
-
-export function hasConsent(origin: string, agentId: string): boolean {
-  return granted[key(origin, agentId)] === DISCLOSURE_VERSION;
-}
-export function grantConsent(origin: string, agentId: string): void {
-  write({ ...granted, [key(origin, agentId)]: DISCLOSURE_VERSION });
-}
-export function revokeConsent(origin: string, agentId: string): void {
-  const next = { ...granted };
-  delete next[key(origin, agentId)];
-  write(next);
-}
+// Earlier builds kept the answer in this file on the phone; the server's record replaced it.
+const legacyFile = new File(Paths.document, "ai-consent.json");
+if (legacyFile.exists) legacyFile.delete();
 
 export function useConsent(agentId: string): boolean {
   const { connection } = useSignedIn();
-  return useSyncExternalStore((listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => hasConsent(connection.origin, agentId));
+  useSyncExternalStore(subscribeConsent, consentVersion);
+  return hasConsent(connection.origin, agentId);
 }
 
 const askConsent = (agentId: string) => router.push({ pathname: "/consent/[agentId]", params: { agentId } });
@@ -57,17 +34,27 @@ export function withConsent(origin: string, agentId: string, send: () => void): 
   askConsent(agentId);
 }
 
+// The server refused a send for want of permission (another app withdrew it since this phone last looked): the phone
+// asks again. Returns whether the error was that refusal.
+export function consentRefused(origin: string, agentId: string, error: unknown): boolean {
+  if (!(error instanceof ApiFailure) || error.code !== AI_CONSENT_ERROR) return false;
+  forgetConsent(origin, agentId);
+  askConsent(agentId);
+  return true;
+}
+
 // The Settings switch. On opens the permission screen, the same one a first send opens, and only its Allow button
-// grants; off withdraws at once.
-export function changeConsent(origin: string, agentId: string, on: boolean): void {
-  if (on) askConsent(agentId);
-  else revokeConsent(origin, agentId);
+// grants; off withdraws at once on the server.
+export async function changeConsent(api: Pick<Api, "setAiConsent">, agentId: string, on: boolean): Promise<void> {
+  if (on) { askConsent(agentId); return; }
+  await api.setAiConsent(agentId, { allow: false, provider: AGENT_PROVIDER });
 }
 
 export function ConsentSettings() {
   const { api, connection } = useSignedIn();
   const agents = useQuery({ queryKey: [connection.origin, "agents"], queryFn: api.agents });
-  useSyncExternalStore((listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => granted);
+  const change = useMutation({ mutationFn: ({ agentId, on }: { agentId: string; on: boolean }) => changeConsent(api, agentId, on), retry: false });
+  useSyncExternalStore(subscribeConsent, consentVersion);
   if (!agents.data || agents.data.agents.length === 0) return null;
   return <View style={styles.section}>
     <Text style={styles.title}>AI provider</Text>
@@ -76,12 +63,13 @@ export function ConsentSettings() {
         const on = hasConsent(connection.origin, agent.id);
         return <View key={agent.id} style={styles.row}>
           <View style={styles.text}><Text style={styles.name}>{agent.name}</Text><Text style={styles.meta}>{PROVIDER.name}</Text></View>
-          <Switch accessibilityLabel={`Send to ${PROVIDER.name} for ${agent.name}`} value={on}
-            onValueChange={(value) => changeConsent(connection.origin, agent.id, value)} />
+          <Switch accessibilityLabel={`Send to ${PROVIDER.name} for ${agent.name}`} value={on} disabled={change.isPending}
+            onValueChange={(value) => change.mutate({ agentId: agent.id, on: value })} />
         </View>;
       })}
     </View>
-    <Text style={styles.help}>Off: this phone sends nothing to that agent. Tasks already running continue until they end or you stop them.</Text>
+    <ErrorLine error={change.error} />
+    <Text style={styles.help}>Off: no app sends anything to {PROVIDER.company} for that agent, and its queued and running tasks stop.</Text>
   </View>;
 }
 

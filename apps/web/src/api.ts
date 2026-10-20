@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  Attachment, ClaudeSignInCode, ClaudeSignInStart, ClaudeSignInStatus, AddDomainRuleRequest, AgentSettingsRequest, AgentSummary, AgentsResponse, CreateAgentRequest, ApiError, AttendedRequest,
+  AiConsentRequest, AiConsentView, Attachment, ClaudeSignInCode, ClaudeSignInStart, ClaudeSignInStatus, AddDomainRuleRequest, AgentSettingsRequest, AgentSummary, AgentsResponse, CreateAgentRequest, ApiError, AttendedRequest,
   AuditPage, AuditVerification, EmptyResponse, FreshAuth, TaskPage, WebAuthnAuthenticationOptions, WebAuthnRegistrationOptions, AuthVerifyRequest, ComputerView, ControlLease, CreateTaskRequest,
   DecideDomainRequest, DomainRuleView, DomainsView, SafeFileListing, InboxResponse, Me,
   RelPath, ReplyRequest, ReactionRequest, type ReactionEmoji, SetupOptionsRequest, SetupVerifyRequest, TakeoverDoneRequest,
@@ -122,6 +122,8 @@ export const api = {
   removeAgent: (id: string) => request(agentPath(id), EmptyResponse, "DELETE"),
   agent: async (id: string) => rememberAgent(await request(agentPath(id), AgentSummary)),
   inbox: () => request("/inbox", InboxResponse),
+  aiConsent: (id: string) => request(`${agentPath(id)}/ai-consent`, AiConsentView),
+  setAiConsent: (id: string, input: AiConsentRequest) => request(`${agentPath(id)}/ai-consent`, AiConsentView, "PUT", AiConsentRequest.parse(input)),
   settings: async (id: string, model: string, effort: string, name?: string) => rememberAgent(await request(`${agentPath(id)}/settings`, AgentSummary, "PUT", AgentSettingsRequest.parse({ model, effort, ...(name === undefined ? {} : { name }) }))),
   computer: (id: string, action: "start" | "stop") => request(`${agentPath(id)}/computer/${action}`, ComputerView, "POST", {}),
   kill: (id: string) => request(`${agentPath(id)}/kill`, ComputerView, "POST", {}),

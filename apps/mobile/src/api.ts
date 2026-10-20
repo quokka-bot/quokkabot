@@ -1,10 +1,11 @@
 import { z } from "zod";
 import {
-  AgentSummary, AgentsResponse, ApiError, AttendedRequest, ComputerView, ControlLease, CreateTaskRequest, DecideDomainRequest, DomainsView, EmptyResponse,
+  AgentSummary, AgentsResponse, AiConsentRequest, AiConsentView, ApiError, AttendedRequest, ComputerView, ControlLease, CreateTaskRequest, DecideDomainRequest, DomainsView, EmptyResponse,
   InboxResponse, LoginView, Me, ReactionRequest, type ReactionEmoji, ReplyRequest, SaveLoginRequest, ScreenSize, SessionView,
   TakeoverDoneRequest, TakeoverFillRequest, TakeoverFillResponse, TakeoverFocusResponse, TakeoverRequest, TakeoverScreenRequest, Task, TaskDetail,
   TaskPage, UpdateLoginRequest, ViewTicketResponse,
 } from "@quokkabot/shared";
+import { rememberAgentConsent, rememberConsent } from "./consent-store";
 
 export class ApiFailure extends Error {
   constructor(message: string, readonly status: number, readonly code: string) {
@@ -60,7 +61,11 @@ const taskPath = (id: string) => `/tasks/${encodeURIComponent(id)}`;
 // web app's do, so a reused agent slot never receives a request meant for the agent that was removed.
 export function createApi(fetchImpl: Fetch, origin: string, token: string, onSignedOut: () => void) {
   const generations = new Map<string, number>();
-  const remember = (agent: AgentSummary): AgentSummary => { generations.set(agent.id, agent.generation); return agent; };
+  const remember = (agent: AgentSummary): AgentSummary => {
+    generations.set(agent.id, agent.generation);
+    rememberAgentConsent(origin, agent);
+    return agent;
+  };
   async function request<T>(path: string, schema: z.ZodType<T>, method = "GET", body?: unknown, extra: Record<string, string> = {}): Promise<T> {
     const agentId = /^\/agents\/([^/?]+)/.exec(path)?.[1];
     const generation = agentId === undefined ? undefined : generations.get(decodeURIComponent(agentId));
@@ -83,6 +88,12 @@ export function createApi(fetchImpl: Fetch, origin: string, token: string, onSig
       return result;
     },
     agent: async (id: string) => remember(await request(agentPath(id), AgentSummary)),
+    // The owner's permission to send this agent's work to its AI provider, kept on the server for every app.
+    setAiConsent: async (id: string, input: AiConsentRequest) => {
+      const view = await request(`${agentPath(id)}/ai-consent`, AiConsentView, "PUT", AiConsentRequest.parse(input));
+      rememberConsent(origin, id, view);
+      return view;
+    },
     inbox: () => request("/inbox", InboxResponse),
     tasks: (id: string) => request(`${agentPath(id)}/tasks`, TaskPage),
     task: (id: string) => request(taskPath(id), TaskDetail),
