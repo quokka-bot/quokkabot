@@ -38,7 +38,11 @@ describe("owner Claude sign-in routes", () => {
         if (sql.startsWith("select * from agents")) return { rows: added ? [{ id: agentId, generation, added_at: new Date(), removing_at: null }] : [] };
         if (sql.startsWith("select 1 from tasks")) return { rows: running ? [{}] : [] };
         if (sql.startsWith("select id from agents where id = any")) return { rows: added ? [{ id: agentId }] : [] };
-        if (sql.startsWith("insert into claude_sign_in")) { shared = { id: values[0] as string, signed_in_at: new Date(values[1] as string) }; return { rows: [] }; }
+        if (sql.startsWith("insert into claude_sign_in")) {
+          const signedInAt = new Date(values[1] as string);
+          if (!shared || shared.signed_in_at <= signedInAt) shared = { id: values[0] as string, signed_in_at: signedInAt };
+          return { rows: [] };
+        }
         if (sql.startsWith("select id, signed_in_at from claude_sign_in")) return { rows: shared ? [shared] : [] };
         if (sql.startsWith("delete from claude_sign_in")) { shared = null; return { rows: [] }; }
         throw new Error(`Unexpected SQL: ${sql}`);

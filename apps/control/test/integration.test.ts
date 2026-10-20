@@ -1823,8 +1823,12 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     expect(claudeToken).toBeNull();
     expect((await db.query("select cli_signed_in from agents where id = $1", [AGENT])).rows[0].cli_signed_in).toBe(own);
 
+    // A sign-in that finishes after a later one leaves the later one recorded, as the supervisor keeps its token.
+    const later = randomUUID();
+    await db.query("insert into claude_sign_in (id, signed_in_at) values ($1, now() + interval '1 hour')", [later]);
     const again = await api("POST", `/api/agents/${AGENT}/claude-sign-in`, {});
     await api("POST", `/api/claude-sign-in/${again.body.signInId}/code`, code);
+    expect((await db.query("select id from claude_sign_in")).rows).toEqual([{ id: later }]);
     expect((await api("DELETE", "/api/claude-sign-in", undefined, { origin: "https://evil.example" })).status).toBe(403);
     const out = await api("DELETE", "/api/claude-sign-in");
     expect(out.body).toEqual({ signedIn: false, signedInAt: null });
