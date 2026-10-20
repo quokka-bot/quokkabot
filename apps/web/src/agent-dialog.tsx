@@ -10,7 +10,7 @@ export function agentCapacityMessage(total: number): string {
   return `This server has room for ${total} agents. Set QUOKKABOT_AGENTS higher on the server and run install.sh again to add more.`;
 }
 
-function Dialog({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+export function Dialog({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const dialog = ref.current;
@@ -82,7 +82,7 @@ export function RemoveAgent({ agent }: { agent: AgentSummary }) {
     {agent.removing && <p role="status">Removal is in progress. Retry Remove agent to finish.</p>}
     <button type="button" className="danger" onClick={() => setOpen(true)}>Remove agent</button>
     {open && <Dialog title={`Remove ${agent.name}?`} onClose={() => { if (!remove.isPending) setOpen(false); }}>
-      <p>Its chats, files, saved logins, connected apps and Claude sign-in are deleted. This cannot be undone.</p>
+      <p>Its chats, files, saved logins and connected apps are deleted. This cannot be undone.</p>
       <ErrorLine error={remove.error} />
       <div className="actions"><button type="button" className="danger" disabled={remove.isPending} onClick={() => remove.mutate()}>Remove</button>
         <button type="button" disabled={remove.isPending} onClick={() => setOpen(false)}>Cancel</button></div>

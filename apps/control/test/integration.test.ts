@@ -72,6 +72,8 @@ describe.skipIf(!enabled)("control plane end to end", () => {
   const selkiesTables: Record<string, unknown>[] = [];
   const policies: Record<string, unknown>[] = [];
   const supervisorCalls: string[] = [];
+  // The fake supervisor's stored Claude sign-in: which sign-in made it and when.
+  let claudeToken: { id: string; at: string } | null = null;
   const workspaceImages = new Map<string, Buffer>();
   let egressFrozen = 0;
   const sessionToken = secret();
@@ -145,6 +147,23 @@ describe.skipIf(!enabled)("control plane end to end", () => {
         }
         if (/\/computer\/(start|stop|unlatch)$/.test(p) || p.endsWith("/tools/reset") || p.endsWith("/wipe") || /\/runs\/[^/]+\/cleanup$/.test(p)) return json(res, 200, {});
         if (p.endsWith("/computer/kill")) return json(res, 200, { agentId: AGENT, killed: true, killedAt: new Date().toISOString(), sandboxes: [] });
+        if (p === `/v1/agents/${AGENT}/claude-sign-in` && req.method === "POST") {
+          await body(req);
+          return json(res, 200, { signInId: randomUUID(), url: "https://claude.com/cai/oauth/authorize?code=true&state=integration" });
+        }
+        const signInMatch = /^\/v1\/claude-sign-in\/([^/]+)(\/code)?$/.exec(p);
+        if (signInMatch?.[2] && req.method === "POST") {
+          await body(req);
+          claudeToken = { id: signInMatch[1]!, at: new Date().toISOString() };
+          return json(res, 200, { signedIn: true, signedInAt: claudeToken.at });
+        }
+        if (signInMatch && req.method === "DELETE") return json(res, 200, { ok: true });
+        const tokenMatch = /^\/v1\/claude-token(?:\/([^/]+))?$/.exec(p);
+        if (tokenMatch && req.method === "DELETE") {
+          const removed = claudeToken !== null && (tokenMatch[1] === undefined || tokenMatch[1] === claudeToken.id);
+          if (removed) claudeToken = null;
+          return json(res, 200, { removed });
+        }
         if (p === `/v1/agents/${AGENT}/workspace-file` && req.method === "POST") {
           const chunks: Buffer[] = [];
           for await (const chunk of req) chunks.push(chunk as Buffer);
@@ -1776,6 +1795,44 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     expect((await db.query("select count(*)::int as n from ai_consents")).rows[0].n).toBe(rowsBefore);
     expect((await api("GET", path)).body).toMatchObject({ state: "granted", allowed: true });
   });
+
+  it("signs every agent in to Claude once, drops a sign-in Claude refuses, and signs out", async () => {
+    const code = { code: "abcdefgh_1234#state_abcdefgh" };
+    const own = (await db.query("select cli_signed_in from agents where id = $1", [AGENT])).rows[0].cli_signed_in;
+    const started = await api("POST", `/api/agents/${AGENT}/claude-sign-in`, {});
+    expect(started.status).toBe(200);
+    const finished = await api("POST", `/api/claude-sign-in/${started.body.signInId}/code`, code);
+    expect(finished.body).toEqual({ signedIn: true, signedInAt: claudeToken!.at });
+    expect((await api("GET", "/api/claude-sign-in")).body).toEqual(finished.body);
+    for (const agent of (await api("GET", "/api/agents")).body.agents) expect(agent).toMatchObject({ cliSignedIn: "yes", cliAccount: null, cliPlan: null });
+    expect((await db.query("select id from claude_sign_in")).rows).toEqual([{ id: started.body.signInId }]);
+
+    // A run started after the sign-in runs with it. Claude refusing it removes it for every agent, the agent's own
+    // sign-in untouched.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const before = runs.size;
+    const created = await api("POST", `/api/agents/${AGENT}/tasks`, { prompt: "Check the plan." });
+    expect(created.status).toBe(200);
+    const run = await waitFor(() => [...runs.values()][before], "run with the shared sign-in");
+    emit(run, { type: "result", subtype: "success", is_error: true, result: "Invalid API key · Please run /login", session_id: "c", usage: { input_tokens: 1, output_tokens: 1 } });
+    run.state = "exited";
+    run.exitCode = 1;
+    expect((await taskWhen(created.body.id, "failed")).error).toBe("Claude Code is signed out. Sign in to Claude, then try again.");
+    expect((await api("GET", "/api/claude-sign-in")).body).toEqual({ signedIn: false, signedInAt: null });
+    expect(supervisorCalls).toContain(`DELETE /v1/claude-token/${started.body.signInId}`);
+    expect(claudeToken).toBeNull();
+    expect((await db.query("select cli_signed_in from agents where id = $1", [AGENT])).rows[0].cli_signed_in).toBe(own);
+
+    const again = await api("POST", `/api/agents/${AGENT}/claude-sign-in`, {});
+    await api("POST", `/api/claude-sign-in/${again.body.signInId}/code`, code);
+    expect((await api("DELETE", "/api/claude-sign-in", undefined, { origin: "https://evil.example" })).status).toBe(403);
+    const out = await api("DELETE", "/api/claude-sign-in");
+    expect(out.body).toEqual({ signedIn: false, signedInAt: null });
+    expect(supervisorCalls).toContain("DELETE /v1/claude-token");
+    expect((await db.query("select 1 from claude_sign_in")).rows).toEqual([]);
+    const types = (await api("GET", `/api/agents/${AGENT}/audit`)).body.events.map((e: { type: string; actor: string }) => `${e.actor} ${e.type}`);
+    expect(types).toEqual(expect.arrayContaining(["owner claude.signed_in", "system claude.signed_out", "owner claude.signed_out"]));
+  }, 30_000);
 
   it("keeps the audit log append-only for the application role", async () => {
     await expect(db.query("update audit_events set data = '{}' where seq = 1")).rejects.toThrow(/permission denied/);

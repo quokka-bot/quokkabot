@@ -178,6 +178,13 @@ export class SupervisorServer {
         if (cleanup) { await this.supervisor.cleanup(agent, RunId.parse(cleanup[1]), Cleanup.parse(input).sessionId); json(response, 200, { ok: true }); return; }
       }
     }
+    // The stored Claude sign-in all agents share. Only whether it exists and when it was made cross this API.
+    const tokenRoute = /^\/v1\/claude-token(?:\/([^/]+))?$/.exec(url.pathname);
+    if (tokenRoute) {
+      const id = tokenRoute[1] === undefined ? undefined : z.uuid().parse(tokenRoute[1]);
+      if (request.method === "GET" && id === undefined) { json(response, 200, await this.supervisor.claudeSignIn()); return; }
+      if (request.method === "DELETE") { json(response, 200, await this.supervisor.signOutClaude(id)); return; }
+    }
     const signInRoute = /^\/v1\/claude-sign-in\/([^/]+)(?:\/(code))?$/.exec(url.pathname);
     if (signInRoute) {
       const id = z.uuid().parse(signInRoute[1]);

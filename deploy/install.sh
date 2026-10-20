@@ -531,6 +531,8 @@ make_data_dirs() {
   make_dir 0:0 0700 "$DATA/caddy/config"
   make_dir "$UID_SANDBOX:$UID_SANDBOX" 0750 "$DATA/supervisor-socket"
   make_dir "$UID_SANDBOX:$UID_SANDBOX" 0700 "$DATA/runs"
+  # The Claude sign-in all agents share: the supervisor's alone. No sandbox mounts it and backups leave it out.
+  make_dir "$UID_SANDBOX:$UID_SANDBOX" 0700 "$DATA/claude-sign-in"
   make_dir 0:0 0755 "$DATA/agents"
   # Signed desktop app builds and their update manifests, served read-only by control at /desktop/.
   make_dir 0:0 0755 "$DATA/desktop"

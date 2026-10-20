@@ -21,10 +21,10 @@ when missing.
 
 ## The data volume
 
-Everything Quokka Bot stores lives on one LUKS-encrypted volume mounted at `/var/lib/quokkabot`: the CLI sign-in,
+Everything Quokka Bot stores lives on one LUKS-encrypted volume mounted at `/var/lib/quokkabot`: the Claude sign-in,
 workspaces, browser profiles, downloads, run logs, the database and the TLS certificates. The key is
 `/etc/quokkabot/volume.key` (root only, 0400) on the root disk, so the volume opens at boot without a prompt. Server
-snapshots and Hetzner Backups do not include attached volumes, so the CLI sign-in never ends up in a backup.
+snapshots and Hetzner Backups do not include attached volumes, so the Claude sign-in never ends up in a backup.
 
 First install, with an empty device:
 
@@ -75,7 +75,7 @@ On a new server with a new data volume:
 2. Run `install.sh --setup-volume <device>` as for a first install. It keeps the saved secrets and agent ids.
 3. Run `quokkabot-backup restore` (or `restore <snapshot id>`). It stops the control plane, restores the database
    and the agents' files, and starts everything again.
-4. Each agent signs in to Claude again from its card; the CLI sign-ins are never in a backup.
+4. Sign in to Claude again from any agent's chat; the Claude sign-in is never in a backup.
 
 ## Install
 

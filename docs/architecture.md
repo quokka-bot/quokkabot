@@ -53,9 +53,14 @@ executes it. There is no eval, cookie, storage, raw DevTools, upload or clipboar
 
 ## Boundaries
 
-- **The sign-in.** The owner opens Claude's sign-in page from the agent's card and pastes its one-time code back into
-  the card, with the terminal in Computer available as a fallback. The credential stays in the CLI sandbox's private
-  home on an encrypted volume that server snapshots never include; Quokka Bot never reads it.
+- **The sign-in.** One Claude sign-in serves every agent. The owner opens Claude's sign-in page from any agent's chat
+  and pastes its one-time code back. That agent's CLI runs `claude setup-token` in a TTY the supervisor holds; the
+  long-lived token it prints goes to a supervisor-only file on the encrypted volume (`claude-sign-in/`), which no
+  sandbox mounts and backups leave out. The supervisor hands it to the CLI's task runs and status checks as
+  `CLAUDE_CODE_OAUTH_TOKEN`, ahead of any sign-in in the agent's own home; the container, the owner's terminal and the
+  tools and browser sandboxes never get it. Control records only that a sign-in exists, which sign-in made it and when.
+  A run Claude refuses removes that sign-in for every agent, and the owner can sign out in Settings. An agent signed in
+  from its own terminal keeps that sign-in while no shared one exists.
 - **Shell.** Commands the model runs execute in the tools sandbox: no network, no CLI home, no browser profile, no
   Docker socket. Downloads are mounted read-only.
 - **Browser.** The agent never touches Chrome's DevTools port. Password and code fields are hidden in snapshots and

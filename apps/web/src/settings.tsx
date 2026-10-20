@@ -6,6 +6,7 @@ import { encode } from "uqr";
 import { api } from "./api.js";
 import { RemoveAgent } from "./agent-dialog.js";
 import { AiConsentSetting } from "./ai-consent.js";
+import { ClaudeSetting } from "./claude-sign-in.js";
 import { LINK_CODE_KEY } from "./link.js";
 import { dateLabel, ErrorLine, useAction, usePollInterval } from "./ui.js";
 
@@ -93,7 +94,7 @@ export function ConnectPhone() {
 }
 
 export function OwnerSettings() {
-  return <><Devices /><ConnectPhone />{window.quokkabotDesktop && <DesktopSettings />}</>;
+  return <><ClaudeSetting /><Devices /><ConnectPhone />{window.quokkabotDesktop && <DesktopSettings />}</>;
 }
 
 export function Settings({ agent }: { agent: AgentSummary }) {

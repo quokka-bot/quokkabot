@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  AiConsentRequest, AiConsentView, Attachment, ClaudeSignInCode, ClaudeSignInStart, ClaudeSignInStatus, AddDomainRuleRequest, AgentSettingsRequest, AgentSummary, AgentsResponse, CreateAgentRequest, ApiError, AttendedRequest,
+  AiConsentRequest, AiConsentView, Attachment, ClaudeSignInCode, ClaudeSignInStart, ClaudeSignInView, AddDomainRuleRequest, AgentSettingsRequest, AgentSummary, AgentsResponse, CreateAgentRequest, ApiError, AttendedRequest,
   AuditPage, AuditVerification, EmptyResponse, FreshAuth, TaskPage, WebAuthnAuthenticationOptions, WebAuthnRegistrationOptions, AuthVerifyRequest, ComputerView, ControlLease, CreateTaskRequest,
   DecideDomainRequest, DomainRuleView, DomainsView, SafeFileListing, InboxResponse, Me,
   RelPath, ReplyRequest, ReactionRequest, type ReactionEmoji, SetupOptionsRequest, SetupVerifyRequest, TakeoverDoneRequest,
@@ -91,7 +91,9 @@ const queryString = (values: Record<string, string | undefined>) => {
 
 export const api = {
   startClaudeSignIn: (id: string) => request(`${agentPath(id)}/claude-sign-in`, ClaudeSignInStart, "POST", {}),
-  submitClaudeSignIn: (id: string, code: string) => request(`/claude-sign-in/${encodeURIComponent(id)}/code`, ClaudeSignInStatus, "POST", ClaudeSignInCode.parse({ code })),
+  submitClaudeSignIn: (id: string, code: string) => request(`/claude-sign-in/${encodeURIComponent(id)}/code`, ClaudeSignInView, "POST", ClaudeSignInCode.parse({ code })),
+  claudeSignIn: () => request("/claude-sign-in", ClaudeSignInView),
+  signOutClaude: () => request("/claude-sign-in", ClaudeSignInView, "DELETE"),
   cancelClaudeSignIn: (id: string) => request(`/claude-sign-in/${encodeURIComponent(id)}`, EmptyResponse, "DELETE"),
   me: () => request("/me", Me),
   setupOptions: async (ticket: string) => await request("/setup/options", WebAuthnRegistrationOptions, "POST", SetupOptionsRequest.parse({ ticket })) as PublicKeyCredentialCreationOptionsJSON,

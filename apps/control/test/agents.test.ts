@@ -32,6 +32,7 @@ class SlotDb {
   readonly reserved = new Set<string>();
   readonly calls: string[] = [];
   resourceAgent: string | null = null;
+  shared: { id: string; signed_in_at: Date } | null = null;
   async connect() {
     const held = new Set<string>();
     return { query: async (sql: string, values: unknown[] = []) => {
@@ -62,7 +63,8 @@ class SlotDb {
     if (sql.startsWith("update agents set removing_at")) { row!.removing_at = new Date(); return { rows: [] }; }
     if (sql.includes("update agents set added_at = null")) { Object.assign(row!, { name: values[1], model: values[2], effort: values[3], cli_signed_in: "no", added_at: null, removing_at: null }); return { rows: [] }; }
     if (sql.startsWith("update agents set model")) { Object.assign(row!, { model: values[1], effort: values[2], name: values[3] ?? row!.name }); return { rows: [] }; }
-    if (sql.startsWith("select id, idx, generation, removing_at")) return { rows: row ? [{ ...row }] : [] };
+    if (sql.startsWith("select id, idx, generation, removing_at")) return { rows: row ? [{ cli_account: null, cli_plan: null, ...row }] : [] };
+    if (sql.startsWith("select id, signed_in_at from claude_sign_in")) return { rows: this.shared ? [this.shared] : [] };
     if (sql.includes("as n")) return { rows: [{ n: 0 }] };
     if (sql.startsWith("select id from tasks")) return { rows: [] };
     if (sql.startsWith("select 1 from tasks")) return { rows: [] };
@@ -270,6 +272,18 @@ describe("owner agent routes", () => {
     const result = await app.inject({ method: "PUT", url: `/api/agents/${row.id}/settings`, headers, payload: { name: "  Invoices  ", model: config.defaultModel, effort: config.defaultEffort } });
     expect(result.statusCode).toBe(200);
     expect(result.json().name).toBe("Invoices");
+  });
+  it("reports every agent signed in, a new one included, once the shared Claude sign-in exists", async () => {
+    const { app, headers, db, row } = await httpFixture();
+    Object.assign(row, { cli_signed_in: "yes", cli_account: "own@example.test", cli_plan: "pro" });
+    expect((await app.inject({ url: `/api/agents/${row.id}`, headers })).json()).toMatchObject({ cliSignedIn: "yes", cliAccount: "own@example.test", cliPlan: "pro" });
+    db.shared = { id: "33333333-3333-4333-8333-333333333333", signed_in_at: new Date() };
+    // The shared sign-in comes first; the agent's own account is not the one its runs use.
+    expect((await app.inject({ url: `/api/agents/${row.id}`, headers })).json()).toMatchObject({ cliSignedIn: "yes", cliAccount: null, cliPlan: null });
+    const created = await app.inject({ method: "POST", url: "/api/agents", headers, payload: { name: "Second" } });
+    expect(created.json()).toMatchObject({ name: "Second", cliSignedIn: "yes" });
+    db.shared = null;
+    expect((await app.inject({ url: `/api/agents/${created.json().id}`, headers })).json()).toMatchObject({ cliSignedIn: "no" });
   });
   it.each(["/api/tasks/", "/api/files/", "/api/logins/", "/api/connectors/"])("rejects old resources of a free slot at %s", async prefix => {
     const { app, headers, db } = await httpFixture();

@@ -1,4 +1,4 @@
-import { ClaudeSignInCode, claudeSignInError, type ClaudeSignInStart, type ClaudeSignInStatus } from "@quokkabot/shared";
+import { ClaudeSignInCode, claudeSignInError, type ClaudeSignInStart, type ClaudeSignInView } from "@quokkabot/shared";
 import { z } from "zod";
 import type { AuditLog } from "./audit.js";
 import type { AgentSlots } from "./agents.js";
@@ -6,6 +6,14 @@ import { UpstreamError, type SupervisorClient } from "./clients.js";
 import type { ComputerService } from "./computer.js";
 import { maybeOne, type Db } from "./db.js";
 import { HttpError } from "./errors.js";
+
+// The Claude sign-in all agents share. The supervisor keeps its token; this row records that it exists, which sign-in
+// made it and when. A run started after it uses it, ahead of any sign-in in the agent's own home.
+export interface SharedSignInRow { id: string; signed_in_at: Date }
+
+export function sharedSignIn(db: Db): Promise<SharedSignInRow | null> {
+  return maybeOne<SharedSignInRow>(db, "select id, signed_in_at from claude_sign_in", []);
+}
 
 export class ClaudeSignIns {
   private readonly sessions = new Map<string, { agentId: string; generation: number; expiresAt: number }>();
@@ -44,7 +52,7 @@ export class ClaudeSignIns {
     return result;
   }
 
-  async submit(signInId: string, input: unknown): Promise<ClaudeSignInStatus> {
+  async submit(signInId: string, input: unknown): Promise<ClaudeSignInView> {
     const parsed = ClaudeSignInCode.safeParse(input);
     if (!parsed.success) throw new HttpError(400, "invalid_code", "Paste the complete code from the Claude page");
     const session = this.sessions.get(signInId);
@@ -58,16 +66,28 @@ export class ClaudeSignIns {
         throw new HttpError(404, "unknown_sign_in", "Sign-in expired or ended. Start again.");
       }
       await this.slots.require(session.agentId, false, session.generation);
-      const status = await this.call(() => this.supervisor.submitSignIn(signInId, parsed.data.code), parsed.data.code);
-      if (!status.loggedIn) throw new HttpError(400, "claude_sign_in_failed", "Claude is still signed out. Start again.");
+      const view = await this.call(() => this.supervisor.submitSignIn(signInId, parsed.data.code), parsed.data.code);
+      if (!view.signedIn || view.signedInAt === null) throw new HttpError(502, "claude_sign_in_failed", "Claude sign-in did not finish. Start again.");
       this.sessions.delete(signInId);
-      const updated = await maybeOne(this.db,
-        "update agents set cli_signed_in = 'yes', cli_account = $2, cli_plan = $3 where id = $1 and generation = $4 and added_at is not null and removing_at is null returning id",
-        [session.agentId, status.email, status.subscriptionType, session.generation]);
-      if (!updated) throw new HttpError(409, "agent_replaced", "This agent was removed. Reload to see the current agents.");
-      await this.audit.append(session.agentId, "owner", "claude.signed_in", { email: status.email });
-      return status;
+      await this.db.query(
+        "insert into claude_sign_in (id, signed_in_at) values ($1, $2) on conflict (singleton) do update set id = excluded.id, signed_in_at = excluded.signed_in_at",
+        [signInId, view.signedInAt],
+      );
+      for (const agentId of await this.slots.ids()) await this.audit.append(agentId, "owner", "claude.signed_in", { allAgents: true, from: session.agentId });
+      return view;
     });
+  }
+
+  async view(): Promise<ClaudeSignInView> {
+    const row = await sharedSignIn(this.db);
+    return { signedIn: row !== null, signedInAt: row?.signed_in_at.toISOString() ?? null };
+  }
+
+  // Removes the stored token whichever sign-in made it. Runs already going keep theirs until they end.
+  async signOut(): Promise<void> {
+    await this.call(() => this.supervisor.signOutClaude());
+    await this.db.query("delete from claude_sign_in", []);
+    for (const agentId of await this.slots.ids()) await this.audit.append(agentId, "owner", "claude.signed_out", { allAgents: true });
   }
 
   async cancel(signInId: string): Promise<void> {

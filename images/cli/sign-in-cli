@@ -4,4 +4,6 @@ readonly UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 [[ $# -eq 1 && "$1" =~ $UUID_RE ]] || exit 2
 # A fixed record also lets a restarted supervisor stop an orphaned login before accepting work.
 printf '%s\n' "$1" >/tmp/quokkabot-sign-in
-exec /opt/quokkabot/bin/run-cli "$1" /usr/local/bin/claude auth login --claudeai
+# A long-lived token for the Claude sign-in all agents share. The CLI prints it in the supervisor's TTY and saves
+# no credential in this sandbox.
+exec /opt/quokkabot/bin/run-cli "$1" /usr/local/bin/claude setup-token

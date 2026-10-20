@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Duplex } from "node:stream";
@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CLI_PATHS, RunStatus, StartRunRequest } from "@quokkabot/shared";
 import { SupervisorConfig } from "../src/config.js";
 import { Supervisor } from "../src/supervisor.js";
-import { signInUrl } from "../src/sign-in.js";
-import { cliEnvironment } from "../src/templates.js";
+import { screenText, signInToken, signInUrl } from "../src/sign-in.js";
+import { cliEnvironment, containerBody } from "../src/templates.js";
 import type { ExecCreate } from "../src/docker.js";
 import { multiplex } from "./fake-docker.js";
 
@@ -16,27 +16,41 @@ const runId = "22222222-2222-4222-8222-222222222222";
 const request = StartRunRequest.parse({ runId, sessionId: runId, resume: false, model: "claude-opus-4-6", effort: "high", mcpToken: "a".repeat(32), prompt: "Hello" });
 const url = "https://claude.com/cai/oauth/authorize?code=true&state=abcdefgh";
 const code = "abcdefgh_1234#state_abcdefgh";
+const token = `sk-ant-oat01-${"Tok3n_-".repeat(13)}AA`;
+// What `claude setup-token` draws in a TTY: spaces as cursor moves, the URL as an OSC 8 hyperlink around its text.
+const link = (target: string) => `\x1b]8;id=k19f2c;${target}\x07${target}\x1b]8;;\x07`;
+const urlScreen = (target: string) => `\x1b[?25l\x1b[2mBrowser\x1b[1Cdidn't\x1b[1Copen?\x1b[22m\r\n${link(target)}\r\nPaste\x1b[1Ccode\x1b[1Chere\x1b[1Cif\x1b[1Cprompted\x1b[1C>\x1b[1C`;
+const successScreen = (value: string) => `\x1b[32m✓\x1b[1CLong-lived\x1b[1Cauthentication\x1b[1Ctoken\x1b[1Ccreated\x1b[1Csuccessfully!\x1b[39m\r\n\r\nYour\x1b[1COAuth\x1b[1Ctoken\x1b[1C(valid\x1b[1Cfor\x1b[1C1\x1b[1Cyear):\r\n\r\n\x1b[33m${value}\x1b[39m\r\n\r\n\x1b[2mStore\x1b[1Cthis\x1b[1Ctoken\x1b[1Csecurely.\x1b[22m\r\n`;
 interface Exec {
   body: ExecCreate; stream: Duplex; input: string; running: boolean; exitCode: number | null;
 }
 
 // A Docker attach stream with independent stdin and multiplexed stdout, without a listening socket.
+// A TTY exec (the sign-in) has raw output and gets its input key by key; every other exec is multiplexed.
 class MemoryDocker {
   execs: Exec[] = [];
-  loginOutput = `Opening browser to sign in…\nIf the browser didn't open, visit: ${url}\nPaste code here if prompted > `;
-  loginResult = "Some success wording\n";
-  loginExit = 0;
+  loginOutput = urlScreen(url);
+  loginResult = successScreen(token);
+  // null: the CLI shows the result and waits, as it does after an error.
+  loginExit: number | null = 0;
   loginHold = false;
   status = { loggedIn: true, email: "owner@example.test", subscriptionType: "max", privateField: "discard" };
   create = async (_container: string, body: ExecCreate) => {
     const exec: Exec = { body, stream: undefined as unknown as Duplex, input: "", running: true, exitCode: null };
     exec.stream = new Duplex({
       read() {},
-      write(chunk: Buffer, _encoding, callback) { exec.input += chunk.toString(); callback(); },
+      write: (chunk: Buffer, _encoding, callback) => {
+        exec.input += chunk.toString();
+        if (body.Cmd[0] === CLI_PATHS.signInWrapper && exec.input.endsWith("\r") && !this.loginHold) {
+          exec.stream.push(Buffer.from(this.loginResult));
+          if (this.loginExit !== null) this.finish(exec, this.loginExit);
+        }
+        callback();
+      },
       final: (callback) => {
         const cmd = body.Cmd[0];
         if (cmd === CLI_PATHS.signInWrapper) {
-          if (!this.loginHold) { exec.stream.push(multiplex(1, this.loginResult)); this.finish(exec, this.loginExit); }
+          // Ending a TTY's input is not how the sign-in is driven.
         } else if (cmd === CLI_PATHS.cancelSignIn) {
           for (const candidate of this.execs) if (candidate.body.Cmd[0] === CLI_PATHS.signInWrapper && candidate.running) this.finish(candidate, 137);
           this.finish(exec, 0);
@@ -53,10 +67,12 @@ class MemoryDocker {
   start = async (id: string) => {
     const exec = this.execs[Number(id)]!;
     if (exec.body.Cmd[0] === CLI_PATHS.signInWrapper) {
-      // Split both a Docker frame and the URL, to exercise streaming rather than a single output event.
-      const output = multiplex(1, this.loginOutput);
-      exec.stream.push(output.subarray(0, 13));
-      exec.stream.push(output.subarray(13));
+      // Split the escape sequence and the URL, to exercise streaming rather than a single output event.
+      const output = Buffer.from(this.loginOutput);
+      const at = this.loginOutput.indexOf("https://") - 3;
+      exec.stream.push(output.subarray(0, at));
+      exec.stream.push(output.subarray(at, at + 20));
+      exec.stream.push(output.subarray(at + 20));
     }
     return exec.stream;
   };
@@ -82,6 +98,7 @@ describe("Claude sign-in with Docker exec streams", () => {
     });
     await mkdir(join(root, "agents/1/run"), { recursive: true });
     await mkdir(join(root, "runs"));
+    await mkdir(join(root, "claude-sign-in"), { mode: 0o700 });
     supervisor = new Supervisor(config, { own: async () => undefined, log: vi.fn() });
     agent = config.agents[0]!;
     docker = new MemoryDocker();
@@ -96,33 +113,74 @@ describe("Claude sign-in with Docker exec streams", () => {
     vi.restoreAllMocks();
   });
 
-  it("accepts only provider HTTPS authorize URLs", () => {
-    expect(signInUrl(`visit: ${url}`)).toBe(url);
-    expect(signInUrl("https://claude.ai/oauth/authorize?state=ok")).toBe("https://claude.ai/oauth/authorize?state=ok");
-    for (const value of ["https://evil.test/oauth/authorize", "https://claude.com.evil.test/oauth/authorize", "https://claude.com/other", "http://claude.com/oauth/authorize", "https://evil@claude.com/oauth/authorize", "https://claude.com:444/oauth/authorize"]) expect(signInUrl(value)).toBeNull();
+  it("accepts only provider HTTPS authorize URLs, and only from a complete hyperlink", () => {
+    expect(signInUrl(urlScreen(url))).toBe(url);
+    expect(signInUrl(link("https://claude.ai/oauth/authorize?state=ok"))).toBe("https://claude.ai/oauth/authorize?state=ok");
+    for (const value of ["https://evil.test/oauth/authorize", "https://claude.com.evil.test/oauth/authorize", "https://claude.com/other", "http://claude.com/oauth/authorize", "https://evil@claude.com/oauth/authorize", "https://claude.com:444/oauth/authorize"]) expect(signInUrl(link(value))).toBeNull();
+    // Visible text can be cut by the terminal's width; an unterminated hyperlink can be cut by the stream.
+    expect(signInUrl(`visit: ${url}\r\n`)).toBeNull();
+    expect(signInUrl(`\x1b]8;id=a;${url}`)).toBeNull();
   });
 
-  it("returns the URL and submits stdin, then reads only the public status fields", async () => {
+  it("reads the token only after success, and only when every copy on the screen agrees", () => {
+    expect(signInToken(screenText(successScreen(token)))).toBe(token);
+    expect(signInToken(screenText(successScreen(token) + successScreen(token)))).toBe(token);
+    expect(signInToken(screenText(`${token}\r\n`))).toBeNull();
+    // A token cut by a narrow terminal leaves two different strings.
+    expect(signInToken(screenText(successScreen(token) + successScreen(token.slice(0, 60))))).toBeNull();
+    expect(signInToken(screenText(successScreen("sk-ant-oat01-short")))).toBeNull();
+    // A chunk can end inside the token: nothing counts until a character after it arrives.
+    const screen = successScreen(token);
+    expect(signInToken(screenText(screen.slice(0, screen.indexOf(token) + token.length)))).toBeNull();
+    expect(signInToken(screenText(screen.slice(0, screen.indexOf(token) + token.length + 1)))).toBe(token);
+    expect(screenText("Paste\x1b[1Ccode\x1b[3Chere")).toBe("Paste code   here");
+  });
+
+  it("runs setup-token in a wide TTY, types the code then Enter, and stores the token for every agent", async () => {
     const started = await supervisor.startSignIn(agent);
     expect(started).toEqual({ signInId: expect.any(String), url });
     const exec = docker.execs[0]!;
-    expect(exec.body).toMatchObject({ Cmd: [CLI_PATHS.signInWrapper, started.signInId], Tty: false, AttachStdin: true, User: "1000:1000", Env: cliEnvironment(agent), WorkingDir: CLI_PATHS.workdir });
-    expect(await supervisor.submitSignIn(started.signInId, code)).toEqual({ loggedIn: true, email: "owner@example.test", subscriptionType: "max" });
-    expect(exec.input).toBe(code + "\n");
+    expect(exec.body).toMatchObject({ Cmd: [CLI_PATHS.signInWrapper, started.signInId], Tty: true, ConsoleSize: [50, 1000], AttachStdin: true, User: "1000:1000", Env: [...cliEnvironment(agent), "TERM=xterm-256color"], WorkingDir: CLI_PATHS.workdir });
+    const view = await supervisor.submitSignIn(started.signInId, code);
+    expect(view).toEqual({ signedIn: true, signedInAt: expect.any(String) });
+    expect(exec.input).toBe(code + "\r");
+    expect(await supervisor.claudeToken.token()).toBe(token);
+    expect(await supervisor.claudeSignIn()).toEqual(view);
+    const file = join(root, "claude-sign-in/token.json");
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ id: started.signInId, token, signedInAt: view.signedInAt });
     expect(supervisor.runs.records.size).toBe(0);
     expect(supervisor.log).not.toHaveBeenCalled();
   });
 
-  it("returns the trimmed bounded CLI failure without control characters or echoed codes", async () => {
-    docker.loginExit = 1;
-    docker.loginResult = `Login failed: Request failed with status code 400\u0007 ${code}\n`;
+  it("returns the trimmed bounded CLI error without control characters or echoed codes, and stops the waiting CLI", async () => {
+    docker.loginExit = null;
+    docker.loginResult = `\x1b[31mOAuth\x1b[1Cerror:\x1b[1CRequest\x1b[1Cfailed\x1b[1Cwith\x1b[1Cstatus\x1b[1Ccode\x1b[1C400\u0007 ${code}\x1b[1CPress\x1b[1CEnter\x1b[1Cto\x1b[1Cretry.\x1b[39m\r\n`;
     const started = await supervisor.startSignIn(agent);
-    await expect(supervisor.submitSignIn(started.signInId, code)).rejects.toMatchObject({ status: 400, message: "Login failed: Request failed with status code 400 [redacted]" });
+    await expect(supervisor.submitSignIn(started.signInId, code)).rejects.toMatchObject({ status: 400, message: "OAuth error: Request failed with status code 400 [redacted]" });
+    expect(docker.execs[0]!.running).toBe(false);
+    expect(await supervisor.claudeToken.token()).toBeNull();
     const next = await supervisor.startSignIn(agent);
     await supervisor.cancelSignIn(next.signInId);
   });
 
-  it.each(["https://evil.test/oauth/authorize\n", "No URL yet\n"])("times out and kills when no allowed URL appears: %s", async (output) => {
+  it("stores the token as soon as the CLI shows it, and stops a CLI that does not exit", async () => {
+    docker.loginExit = null;
+    const started = await supervisor.startSignIn(agent);
+    expect(await supervisor.submitSignIn(started.signInId, code)).toMatchObject({ signedIn: true });
+    expect(await supervisor.claudeToken.token()).toBe(token);
+    expect(docker.execs[0]!.running).toBe(false);
+    expect(docker.execs.some(exec => exec.body.Cmd[0] === CLI_PATHS.cancelSignIn)).toBe(true);
+  });
+
+  it("refuses an exit without a complete token", async () => {
+    docker.loginResult = successScreen("sk-ant-oat01-short");
+    const started = await supervisor.startSignIn(agent);
+    await expect(supervisor.submitSignIn(started.signInId, code)).rejects.toMatchObject({ status: 400, message: "Claude sign-in failed. Start again." });
+    expect(await supervisor.claudeToken.token()).toBeNull();
+  });
+
+  it.each([link("https://evil.test/oauth/authorize") + "\r\n", `visit: ${url}\r\n`, "No URL yet\r\n"])("times out and kills when no allowed URL appears: %s", async (output) => {
     docker.loginOutput = output;
     vi.useFakeTimers();
     const started = supervisor.startSignIn(agent);
@@ -213,5 +271,52 @@ describe("Claude sign-in with Docker exec streams", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await rejected;
     expect(docker.execs[0]!.running).toBe(false);
+  });
+  it("gives the stored token to task runs and status checks only, never to the container, the owner's terminal or the tools sandbox", async () => {
+    const tokenEnv = `CLAUDE_CODE_OAUTH_TOKEN=${token}`;
+    const started = await supervisor.startSignIn(agent);
+    await supervisor.submitSignIn(started.signInId, code);
+    expect(docker.execs[0]!.body.Env).not.toContain(tokenEnv);
+    await supervisor.startRun(agent, request);
+    const run = docker.execs.find(exec => exec.body.Cmd[0] === CLI_PATHS.runWrapper)!;
+    expect(run.body.Env).toEqual([...cliEnvironment(agent), tokenEnv]);
+    supervisor.runs.records.get(runId)!.status.state = "exited";
+    docker.finish(run, 0);
+    expect(await supervisor.signInStatus(agent)).toMatchObject({ loggedIn: true });
+    expect(docker.execs.find(exec => exec.body.Cmd.includes("status"))!.body.Env).toContain(tokenEnv);
+    const terminal = await supervisor.openTerminal(agent);
+    expect(docker.execs.find(exec => exec.body.Cmd[0] === CLI_PATHS.ownerShell)!.body.Env!.join("\n")).not.toContain(token);
+    terminal.stream.destroy(); terminal.release();
+    await vi.waitFor(() => expect(supervisor.terminalsBusy(agent)).toBe(false));
+    vi.spyOn(supervisor.docker, "createExec").mockImplementationOnce(async (_container, body) => { expect(JSON.stringify(body)).not.toContain(token); return docker.create(_container, body); });
+    await supervisor.exec(agent, { execId: runId, command: "env", cwd: "", timeoutS: 5 });
+    for (const sandbox of ["cli", "tools", "browser"] as const) {
+      expect(JSON.stringify(containerBody(supervisor.config, agent, sandbox, { selkies: "s", browser: "b" }))).not.toContain(token);
+    }
+    expect(JSON.stringify(vi.mocked(supervisor.log).mock.calls)).not.toContain(token);
+  });
+
+  it("runs without the token once the owner signs out, and an older sign-in's expiry leaves a newer token", async () => {
+    const first = await supervisor.startSignIn(agent);
+    await supervisor.submitSignIn(first.signInId, code);
+    const second = await supervisor.startSignIn(agent);
+    await supervisor.submitSignIn(second.signInId, code);
+    expect(await supervisor.signOutClaude(first.signInId)).toEqual({ removed: false });
+    expect(await supervisor.claudeToken.token()).toBe(token);
+    expect(await supervisor.signOutClaude(second.signInId)).toEqual({ removed: true });
+    expect(await supervisor.claudeSignIn()).toEqual({ signedIn: false, signedInAt: null });
+    const third = await supervisor.startSignIn(agent);
+    await supervisor.submitSignIn(third.signInId, code);
+    expect(await supervisor.signOutClaude()).toEqual({ removed: true });
+    await supervisor.startRun(agent, request);
+    const run = docker.execs.find(exec => exec.body.Cmd[0] === CLI_PATHS.runWrapper)!;
+    expect(run.body.Env).toEqual(cliEnvironment(agent));
+    docker.finish(run, 0);
+  });
+
+  it("refuses to run with an unreadable stored sign-in and never quotes it", async () => {
+    await writeFile(join(root, "claude-sign-in/token.json"), `{"token":"${token}"`);
+    await expect(supervisor.startRun(agent, request)).rejects.toThrow("The stored Claude sign-in is unreadable");
+    expect(await supervisor.signOutClaude()).toEqual({ removed: true });
   });
 });
