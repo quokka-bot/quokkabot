@@ -45,6 +45,8 @@ export class Supervisor {
   private readonly cleaning = new Set<string>();
   private readonly signIns = new Map<string, SignIn>();
   private readonly background = new Set<Promise<void>>();
+  // File helpers in flight per agent. A stop or kill records itself on each one it ends.
+  private readonly fileWorks = new Map<string, Set<{ endedBy: ApiError | null }>>();
   private closing = false;
 
   constructor(config: SupervisorConfig, options: SupervisorOptions = {}) {
@@ -166,6 +168,7 @@ export class Supervisor {
 
   async stop(agent: AgentConfig): Promise<ComputerStatus> {
     return this.exclusive(agent, async () => {
+      this.endFileWorks(agent, new ApiError(409, "computer_stopped", "The computer is stopped"));
       const errors: unknown[] = [];
       const signIn = this.signIns.get(agent.agentId);
       if (signIn) await this.stopSignIn(agent, signIn);
@@ -200,6 +203,7 @@ export class Supervisor {
     if (ongoing) return ongoing;
     // Set the in-memory fence synchronously, before any asynchronous filesystem work or queued lifecycle operation.
     this.killing.add(agent.agentId);
+    this.endFileWorks(agent, new ApiError(409, "killed", "Computer is killed; owner must release the latch"));
     const operation = this.performKill(agent);
     this.kills.set(agent.agentId, operation);
     try { return await operation; }
@@ -451,19 +455,25 @@ export class Supervisor {
   }
 
   // The check runs under the lifecycle lock, so a start, stop or kill cannot interleave with the exec. The helper runs
-  // outside the lock so a kill never waits for it. When the helper fails, a stop or kill that ended it in the meantime
-  // gives the same typed answer as one that came first; waiting for the lock lets a stop in progress finish.
+  // outside the lock so a kill never waits for it. A helper that a stop or kill ends gets the same typed answer as a
+  // request that came after it; a helper that fails on its own, a crashed sandbox included, keeps its error.
   private async fileWork<T>(agent: AgentConfig, cmd: string[], work: (launched: { id: string; stream: Duplex }) => Promise<T>): Promise<T> {
-    const launched = await this.exclusive(agent, async () => {
-      await this.requireTools(agent);
-      return this.launch(agent, "tools", this.execBody(cmd));
-    });
-    try { return await work(launched); }
-    catch (error) {
-      try { await this.exclusive(agent, () => this.requireTools(agent)); }
-      catch (now) { if (now instanceof ApiError && now.status === 409) throw now; }
-      throw error;
-    }
+    const works = this.fileWorks.get(agent.agentId) ?? new Set();
+    this.fileWorks.set(agent.agentId, works);
+    const current = { endedBy: null as ApiError | null };
+    works.add(current);
+    try {
+      const launched = await this.exclusive(agent, async () => {
+        await this.requireTools(agent);
+        return this.launch(agent, "tools", this.execBody(cmd));
+      });
+      try { return await work(launched); }
+      catch (error) { throw current.endedBy ?? error; }
+    } finally { works.delete(current); }
+  }
+  private endFileWorks(agent: AgentConfig, answer: ApiError): void {
+    // The kill switch outranks a stop.
+    for (const work of this.fileWorks.get(agent.agentId) ?? []) if (work.endedBy?.code !== "killed") work.endedBy = answer;
   }
 
   async files(agent: AgentConfig, request: FilesRequest): Promise<FilesResult> {
