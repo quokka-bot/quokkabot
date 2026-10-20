@@ -1471,6 +1471,7 @@ describe.skipIf(!enabled)("control plane end to end", () => {
   });
 
   it("labels a setup passkey with the server's host and keeps the owner's name and account through a later setup link", async () => {
+    expect((await api("PUT", "/api/me", { ownerName: "Robin" })).status).toBe(200);
     const before = (await db.query<{ name: string | null; webauthn_user_id: string }>("select name, webauthn_user_id from owner_account where id = 1")).rows[0]!;
     expect(before.name).not.toBeNull();
     const operator = new Auth(db, controlConfig, new AuditLog(db, controlConfig.secrets.auditHmacKey), () => [AGENT]);
