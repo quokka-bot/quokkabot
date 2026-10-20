@@ -16,9 +16,14 @@ export { hasConsent, PROVIDER } from "./consent-store";
 // anything (a task, a reply, a login, a site decision, a hand-back). The answer is the server's record, shared with the
 // web and Mac apps; withdrawing it on any of them stops the agent's queued and running tasks on the server.
 
-// Earlier builds kept the answer in this file on the phone; the server's record replaced it.
-const legacyFile = new File(Paths.document, "ai-consent.json");
-if (legacyFile.exists) legacyFile.delete();
+// Earlier builds kept the answer in this file on the phone; the server's record replaced it. The app no longer reads
+// it, so a failed delete must not stop the app from starting; the next launch tries again.
+try {
+  const legacyFile = new File(Paths.document, "ai-consent.json");
+  if (legacyFile.exists) legacyFile.delete();
+} catch (error) {
+  console.warn("could not delete the old AI consent file", error);
+}
 
 export function useConsent(agentId: string): boolean {
   const { connection } = useSignedIn();

@@ -2,13 +2,13 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { AI_PROVIDERS, type AgentSummary, type AiConsentView } from "@quokkabot/shared";
 
 // The phone follows the server's record of the AI provider permission; the file earlier builds kept is deleted.
-const disk = vi.hoisted(() => ({ files: new Map<string, string>() }));
+const disk = vi.hoisted(() => ({ files: new Map<string, string>(), failDelete: false }));
 vi.mock("expo-file-system", () => ({
   Paths: { document: "documents" },
   File: class {
     constructor(private readonly dir: string, private readonly name: string) {}
     get exists() { return disk.files.has(this.name); }
-    delete() { disk.files.delete(this.name); }
+    delete() { if (disk.failDelete) throw new Error("permission denied"); disk.files.delete(this.name); }
   },
 }));
 vi.mock("react-native", () => ({ StyleSheet: { create: <T,>(styles: T) => styles, hairlineWidth: 1 }, Switch: () => null, Text: () => null, View: () => null }));
@@ -24,12 +24,21 @@ const view = (state: AiConsentView["state"], disclosureVersion: string = AI_PROV
 });
 const agent = (aiConsent: AiConsentView | null) => ({ id: "agent-id", generation: 3, aiConsent }) as unknown as AgentSummary;
 
-beforeEach(() => { disk.files.clear(); vi.resetModules(); vi.clearAllMocks(); });
+beforeEach(() => { disk.files.clear(); disk.failDelete = false; vi.resetModules(); vi.clearAllMocks(); });
 
 it("deletes the consent file earlier builds kept on the phone", async () => {
   disk.files.set("ai-consent.json", JSON.stringify({ [`${origin}|agent-id`]: "2026-10-19" }));
   await import("../src/consent");
   expect(disk.files.has("ai-consent.json")).toBe(false);
+});
+
+it("starts even when the old file cannot be deleted", async () => {
+  disk.files.set("ai-consent.json", "{}");
+  disk.failDelete = true;
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const consent = await import("../src/consent");
+  expect(consent.hasConsent(origin, "agent-id")).toBe(false);
+  expect(warn).toHaveBeenCalledOnce();
 });
 
 it("sends only after an allow under the notice this build shows, whatever the server would send without one", async () => {
