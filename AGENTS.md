@@ -7,8 +7,6 @@ For people and coding agents changing this repository.
 - `apps/control`: the control plane (Fastify, PostgreSQL): API, tasks and runs, the MCP tools the agent uses,
   vault, cards, audit log.
 - `apps/web`: the web app (Vite, React). `apps/desktop`: the Mac app (Electron) around it.
-- `apps/site`: quokkabot.com (Astro, static): home, privacy policy, support. No scripts, nothing loaded from other
-  origins; it deploys to Cloudflare Pages from main.
 - `apps/mobile`: the iPhone app (Expo, React Native); docs/mobile.md. `packages/client`: chat logic the web and
   iPhone apps share (no React, no DOM).
 - `apps/supervisor`: starts and stops each agent's sandboxes (Docker with gVisor).
@@ -33,8 +31,9 @@ For people and coding agents changing this repository.
   proves the boundary still holds.
 - User-facing text says what happens, in short plain sentences. Never use an em dash; `pnpm check` rejects it.
 - No secrets, personal data or real accounts in code, tests or docs.
-- A change that sends data somewhere new, stores something new or changes how long data is kept updates
-  `apps/site/src/pages/privacy.astro` (and `PRIVACY_UPDATED` in `apps/site/src/lib/site.ts`) in the same PR.
+- A change that sends data somewhere new, stores something new or changes how long data is kept says so under
+  Change in the PR description. The privacy policy at quokkabot.com/privacy describes what the software does, and
+  the maintainers update it before that change ships. The website is not in this repository.
 - Do not commit plans, research notes or agent scratch files.
 - Every PR description ends with `Harness:`, `Model:` and `Effort:` lines naming the tool, the model id and the
   reasoning effort that wrote it (`.github/pull_request_template.md`). The PR description check fails without them.

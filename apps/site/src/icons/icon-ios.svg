@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- The KcalSnap mark: a visor with two eyes under a tilted brow. Full-bleed; iOS and Android round the corners. -->
-  <rect width="1024" height="1024" fill="#ffffff"/>
-  <rect x="279.375" y="290.5" width="470" height="66" rx="33" transform="rotate(-7 514.375 323.5)" fill="#0f1417"/>
-  <rect x="232" y="402" width="560" height="300" rx="118" fill="#0f1417"/>
-  <ellipse cx="452" cy="552" rx="42" ry="75" fill="#ffffff"/>
-  <ellipse cx="662" cy="552" rx="42" ry="75" fill="#ffffff"/>
-</svg>
