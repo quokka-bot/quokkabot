@@ -562,6 +562,15 @@ const MIGRATIONS: Migration[] = [
       alter table sessions add column pairing_code_hash text;
     `,
   },
+  {
+    id: 19,
+    sql: () => `
+      -- Whether the agent was told the decision: in the request_domains result, or in the prompt that resumes a task
+      -- parked on its site requests.
+      alter table domain_requests add column reported boolean not null default false;
+      update domain_requests set reported = true where decided_at is not null;
+    `,
+  },
 ];
 
 export async function migrate(config: ControlConfig): Promise<void> {

@@ -60,7 +60,8 @@ export function clientsFor(config: ControlConfig): {
   return { supervisor, egress, handles };
 }
 
-export async function startControl(config: ControlConfig, log: Logger, webRoot: string): Promise<ControlHandles> {
+// `siteWaitMs`: how long request_domains waits for the owner before the agent ends its turn (shorter in tests).
+export async function startControl(config: ControlConfig, log: Logger, webRoot: string, siteWaitMs?: number): Promise<ControlHandles> {
   const { db, audit, auth, agentIds, slots } = await context(config);
   const { supervisor, egress, handles } = clientsFor(config);
 
@@ -94,7 +95,7 @@ export async function startControl(config: ControlConfig, log: Logger, webRoot: 
   const connectors = new Connectors(db, config.secrets.vaultKey, audit, config.appOrigin, config.secrets.googleClient,
     slots, log);
   const mcp = new McpEndpoint(db, tasks, events, audit, supervisor, computer, policy, handles, evidence, vault, connectors, log,
-    (agentId) => config.agents.find((agent) => agent.agentId === agentId)?.mcpUrl ?? null);
+    (agentId) => config.agents.find((agent) => agent.agentId === agentId)?.mcpUrl ?? null, siteWaitMs);
   const mcpServers: http.Server[] = [];
   for (const agent of config.agents) {
     const url = new URL(agent.mcpUrl);
