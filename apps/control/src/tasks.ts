@@ -707,16 +707,18 @@ export class TaskService {
       ? cancelledByOwner || stoppedWithoutConsent || supervisorState === "cancelled" ? "cancelled" : supervisorState === "lost" ? "lost" : "exited"
       : run.state;
     const finalResult = result ?? run.final_result;
+    // A withdrawal can fence the run after the read above: the update reads the fence again, so the run ends as
+    // cancelled and the task stops instead of completing.
     const ended = await one<RunRow>(
       this.db,
-      `update runs set state = $2, exit_code = coalesce($3, exit_code), final_result = coalesce($4, final_result), token_revoked = true,
+      `update runs set state = case when fence_reason = 'ai_consent' and state in ('starting','running') then 'cancelled' else $2 end, exit_code = coalesce($3, exit_code), final_result = coalesce($4, final_result), token_revoked = true,
          ended_at = coalesce(ended_at, now()) where id = $1 returning *`,
       [runId, finalState, exitCode, finalResult ? JSON.stringify(finalResult) : null],
     );
     const task = await this.get(run.task_id);
     if (stillActive) {
       await this.events.append(this.db, task.id, { kind: "run", run: runView(ended) });
-      await this.audit.append(task.agent_id, "system", "run.exited", { runId, state: finalState, exitCode });
+      await this.audit.append(task.agent_id, "system", "run.exited", { runId, state: ended.state, exitCode });
     }
     const lease = await this.computer.lease(task.agent_id);
     if (lease.holder === "agent") await this.computer.setLease(task.agent_id, "paused", "system").catch(() => undefined);
@@ -726,7 +728,7 @@ export class TaskService {
       await this.finishTask(task, (await this.uncertainCount(task.id)) > 0 ? "outcome_unknown" : "cancelled", null, "Cancelled by the owner.");
       return;
     }
-    if (stoppedWithoutConsent) {
+    if (stoppedWithoutConsent || ended.fence_reason === "ai_consent") {
       await this.finishTask(task, (await this.uncertainCount(task.id)) > 0 ? "outcome_unknown" : "cancelled", null, aiConsentStopped("withdrawn"));
       return;
     }
