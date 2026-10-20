@@ -144,7 +144,7 @@ describe("agent lifecycle UI", () => {
     client.setQueryData(["task", taskId], { private: "old transcript" });
     fireEvent.click(await screen.findByRole("button", { name: "Remove agent" }));
     const dialog = screen.getByRole("dialog", { name: `Remove ${agent.name}?` });
-    expect(within(dialog).getByText("Its chats, files, saved logins, connected apps and Claude sign-in are deleted. This cannot be undone.")).toBeTruthy();
+    expect(within(dialog).getByText("Its chats, files, saved logins and connected apps are deleted. This cannot be undone.")).toBeTruthy();
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(screen.getByLabelText("Route").textContent).toBe(`/agents/${secondId}`));

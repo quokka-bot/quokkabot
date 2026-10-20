@@ -58,7 +58,7 @@ import type { DesktopLinks } from "./desktop.js";
 import type { PairingCodes } from "./pairing.js";
 import type { Vault } from "./vault.js";
 import type { Connectors } from "./connectors.js";
-import { ClaudeSignIns } from "./claude-sign-in.js";
+import { ClaudeSignIns, sharedSignIn } from "./claude-sign-in.js";
 import { aboutPage, connectedPage, privacyPage } from "./pages.js";
 import { type Db, many, maybeOne, one } from "./db.js";
 import { HttpError } from "./errors.js";
@@ -597,7 +597,17 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
     return reply.send(createReadStream(path));
   });
 
-  // Claude Code's login runs entirely in the CLI sandbox. Only the provider URL, one-time code and status cross it.
+  // Claude's sign-in page runs in an agent's CLI sandbox; the token it makes goes to the supervisor and serves every
+  // agent. Only the provider URL, the one-time code and whether a sign-in exists cross this API.
+  app.get("/api/claude-sign-in", appRoute, async (request) => {
+    await requireSession(request);
+    return claudeSignIns.view();
+  });
+  app.delete("/api/claude-sign-in", appRoute, async (request) => {
+    await requireSession(request);
+    await claudeSignIns.signOut();
+    return claudeSignIns.view();
+  });
   app.post<{ Params: { agentId: string } }>("/api/agents/:agentId/claude-sign-in", appRoute, async (request) => {
     await requireSession(request);
     return claudeSignIns.start(await agentParam(request.params.agentId));
@@ -621,6 +631,7 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
       "select id, idx, generation, removing_at, name, model, effort, cli_signed_in, cli_account, cli_plan from agents where id = $1 and added_at is not null",
       [agentId],
     );
+    const shared = await sharedSignIn(db);
     const active = await maybeOne<{ id: string }>(db, "select id from tasks where agent_id = $1 and state = 'running' and not exists (select 1 from runs r where r.task_id = tasks.id and r.diagnostic) order by updated_at desc limit 1", [agentId]);
     const waiting = await one<{ n: number }>(
       db,
@@ -636,9 +647,10 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
       name: row.name,
       model: row.model,
       effort: row.effort as AgentSummary["effort"],
-      cliSignedIn: row.cli_signed_in,
-      cliAccount: row.cli_account,
-      cliPlan: row.cli_plan,
+      // The shared sign-in comes first for every agent; the agent's own sign-in counts only without one.
+      cliSignedIn: shared ? "yes" : row.cli_signed_in,
+      cliAccount: shared ? null : row.cli_account,
+      cliPlan: shared ? null : row.cli_plan,
       computer: await computer.view(agentId),
       activeTaskId: (active?.id ?? null) as AgentSummary["activeTaskId"],
       waitingOnOwner: Number(waiting.n),

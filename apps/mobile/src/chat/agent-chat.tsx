@@ -17,7 +17,7 @@ import { useAction } from "./use-action";
 import { useTaskStream } from "./use-task-stream";
 
 const DIVIDER_GAP_MS = 15 * 60_000;
-const SIGNED_OUT = "Claude is signed out on this agent's computer. Sign it in from the web app.";
+const SIGNED_OUT = "Claude is signed out. Sign in from the web or Mac app; every agent uses that sign-in.";
 
 function TimeDivider({ at }: { at: string }) {
   return <Text style={styles.time}>{timeLabel(at)}</Text>;

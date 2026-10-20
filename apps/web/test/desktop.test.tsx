@@ -79,6 +79,7 @@ beforeEach(() => {
     if (path === `/api/agents/${agentId}`) return json(agent);
     if (path === `/api/tasks/${taskId}`) return json(detail);
     if (path.startsWith(`/api/agents/${agentId}/tasks?`)) return json({ tasks: [task], nextBefore: null });
+    if (path === "/api/claude-sign-in") return json({ signedIn: true, signedInAt: at });
     if (path === "/api/sessions") return json({ sessions: devices });
     if (path.startsWith("/api/sessions/") && init?.method === "DELETE") { devices = devices.filter(device => path !== `/api/sessions/${device.id}`); return json({}); }
     if (path === `/api/agents/${agentId}/logins` && init?.method === "GET") return json({ logins });

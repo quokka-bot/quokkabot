@@ -47,6 +47,8 @@ export interface ExecCreate {
   AttachStdout: boolean;
   AttachStderr: boolean;
   Tty: boolean;
+  // [rows, columns] of a TTY exec's terminal from its first byte.
+  ConsoleSize?: [number, number];
   Env?: string[];
   WorkingDir?: string;
 }

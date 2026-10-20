@@ -594,6 +594,19 @@ const MIGRATIONS: Migration[] = [
       grant select, insert, delete on ai_consents to ${appUser};
     `,
   },
+  {
+    id: 21,
+    sql: (appUser) => `
+      -- The Claude sign-in all agents share: at most one row. The supervisor keeps the token; id is the sign-in that
+      -- made it, so a late expiry from an older sign-in cannot remove a newer one.
+      create table claude_sign_in (
+        singleton boolean primary key default true check (singleton),
+        id uuid not null,
+        signed_in_at timestamptz not null
+      );
+      grant select, insert, update, delete on claude_sign_in to ${appUser};
+    `,
+  },
 ];
 
 export async function migrate(config: ControlConfig): Promise<void> {

@@ -8,7 +8,7 @@ import { z } from "zod";
 import {
   ClaudeSignInStatus, claudeSignInError, CLI_PATHS, TOOLS_PATHS, LIMITS, claudeMcpConfig, claudeTaskArgv, claudeUserMessage, FilesResult,
 } from "@quokkabot/shared";
-import type { ComputerStatus, ExecRequest, ExecResult, FilesRequest, FilesExportRequest, RunStatus, StartRunRequest, SandboxName } from "@quokkabot/shared";
+import type { ClaudeSignInView, ComputerStatus, ExecRequest, ExecResult, FilesRequest, FilesExportRequest, RunStatus, StartRunRequest, SandboxName } from "@quokkabot/shared";
 import { SupervisorConfig, requireDataMarker } from "./config.js";
 import type { AgentConfig } from "./config.js";
 import { Docker, DockerError, dockerMissing, dockerOutput } from "./docker.js";
@@ -18,6 +18,7 @@ import { writeWorkspaceBinary } from "./workspace.js";
 import { atomicWrite, directory, durableRemove, emptyDirectory, requireDirectory, isMissing, RunStore } from "./storage.js";
 import type { StoredRun } from "./storage.js";
 import { readSignIn, within, type SignIn } from "./sign-in.js";
+import { ClaudeTokenStore } from "./claude-token.js";
 
 export class ApiError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
@@ -34,6 +35,7 @@ export class Supervisor {
   readonly config: SupervisorConfig;
   readonly docker: Docker;
   readonly runs: RunStore;
+  readonly claudeToken: ClaudeTokenStore;
   private readonly own: (path: string) => Promise<void>;
   readonly log: (event: Record<string, unknown>) => void;
   private readonly locks = new Map<string, Promise<unknown>>();
@@ -49,12 +51,14 @@ export class Supervisor {
     this.config = SupervisorConfig.parse(config);
     this.docker = new Docker(config.dockerSocket);
     this.runs = new RunStore(join(config.dataRoot, "runs"));
+    this.claudeToken = new ClaudeTokenStore(join(config.dataRoot, "claude-sign-in"));
     this.own = options.own ?? ((path) => chown(path, 1000, 1000));
     this.log = options.log ?? ((event) => process.stdout.write(JSON.stringify(event) + "\n"));
   }
 
   async initialize(): Promise<void> {
     await requireDataMarker(this.config);
+    await this.claudeToken.initialize();
     await directory(join(this.config.dataRoot, "agents"));
     for (const agent of this.config.agents) {
       await directory(agentPath(this.config, agent));
@@ -245,6 +249,14 @@ export class Supervisor {
     });
   }
 
+  // The environment of the CLI's own processes: task runs and status checks. With a shared Claude sign-in stored, the
+  // CLI uses its token ahead of any sign-in in the agent's home. The container, the owner's terminal and the other
+  // sandboxes never get it.
+  private async claudeEnvironment(agent: AgentConfig): Promise<string[]> {
+    const token = await this.claudeToken.token();
+    return token === null ? cliEnvironment(agent) : [...cliEnvironment(agent), `CLAUDE_CODE_OAUTH_TOKEN=${token}`];
+  }
+
   private execBody(cmd: string[], options: Partial<ExecCreate> = {}): ExecCreate {
     return { Cmd: cmd, User: "1000:1000", AttachStdin: true, AttachStdout: true, AttachStderr: true, Tty: false, ...options };
   }
@@ -266,7 +278,7 @@ export class Supervisor {
       let startedStream: Duplex | undefined;
       try {
         await atomicWrite(agentPath(this.config, agent, "run/mcp.json"), claudeMcpConfig(`http://${agent.controlAddress.cli}:8090/mcp`, request.mcpToken), this.own);
-        const { Id } = await this.docker.createExec(containerName(agent, "cli"), this.execBody(claudeTaskArgv(request), { Env: cliEnvironment(agent), WorkingDir: CLI_PATHS.workdir }));
+        const { Id } = await this.docker.createExec(containerName(agent, "cli"), this.execBody(claudeTaskArgv(request), { Env: await this.claudeEnvironment(agent), WorkingDir: CLI_PATHS.workdir }));
         record.execId = Id;
         await this.runs.save(record);
         await this.requireLive(agent);
@@ -495,6 +507,8 @@ export class Supervisor {
     this.forgetSignIn(record);
   }
 
+  // `claude setup-token` runs in the agent's CLI sandbox, which already reaches Claude. Its terminal UI needs a TTY; a
+  // wide one keeps the URL and the token on single lines.
   async startSignIn(agent: AgentConfig): Promise<{ signInId: string; url: string }> {
     const record = await this.exclusive(agent, async () => {
       await this.requireLive(agent);
@@ -502,10 +516,10 @@ export class Supervisor {
       const previous = this.signIns.get(agent.agentId);
       if (previous) await this.stopSignIn(agent, previous);
       const id = randomUUID();
-      const { Id } = await this.docker.createExec(containerName(agent, "cli"), this.execBody([CLI_PATHS.signInWrapper, id], { Env: cliEnvironment(agent), WorkingDir: CLI_PATHS.workdir }));
+      const { Id } = await this.docker.createExec(containerName(agent, "cli"), this.execBody([CLI_PATHS.signInWrapper, id], { Tty: true, ConsoleSize: [50, 1000], Env: [...cliEnvironment(agent), "TERM=xterm-256color"], WorkingDir: CLI_PATHS.workdir }));
       await this.requireLive(agent);
       let stream: Duplex;
-      try { stream = await this.docker.startExec(Id, false); }
+      try { stream = await this.docker.startExec(Id, true); }
       catch (error) {
         // A failed attach can still have started the login. Fence immediately before releasing the lifecycle lock.
         this.track(this.kill(agent).then(() => undefined));
@@ -535,15 +549,14 @@ export class Supervisor {
     });
   }
 
-  private async authStatus(agent: AgentConfig, record?: SignIn): Promise<ClaudeSignInStatus> {
+  async signInStatus(agent: AgentConfig): Promise<ClaudeSignInStatus> {
     const launched = await this.exclusive(agent, async () => {
-      if (record) {
-        if (this.signIns.get(agent.agentId) !== record) throw new ApiError(409, "sign_in_ended", "Sign-in was replaced or cancelled. Start again.");
-        this.cleaning.add(agent.agentId);
-      }
+      await this.requireLive(agent);
+      if (this.activeRun(agent) || this.terminals.has(agent.agentId) || this.cleaning.has(agent.agentId) || this.signIns.has(agent.agentId)) throw new ApiError(409, "busy", "The agent's computer is busy");
+      this.cleaning.add(agent.agentId);
       try {
-        return await this.launch(agent, "cli", this.execBody(["timeout", "--signal=KILL", "15s", CLI_PATHS.claude, "auth", "status", "--json"], { Env: cliEnvironment(agent), WorkingDir: CLI_PATHS.workdir }));
-      } catch (error) { if (record) this.cleaning.delete(agent.agentId); throw error; }
+        return await this.launch(agent, "cli", this.execBody(["timeout", "--signal=KILL", "15s", CLI_PATHS.claude, "auth", "status", "--json"], { Env: await this.claudeEnvironment(agent), WorkingDir: CLI_PATHS.workdir }));
+      } catch (error) { this.cleaning.delete(agent.agentId); throw error; }
     });
     try {
       const result = await this.collect(launched.id, launched.stream, "", 16_384);
@@ -552,36 +565,40 @@ export class Supervisor {
       if (result.exitCode !== 0 && status.loggedIn) throw new Error("Status failed");
       return status;
     } catch { throw new ApiError(502, "sign_in_status_failed", "Could not check Claude sign-in status"); }
-    finally { if (record) this.cleaning.delete(agent.agentId); }
-  }
-
-  async signInStatus(agent: AgentConfig): Promise<ClaudeSignInStatus> {
-    await this.exclusive(agent, async () => {
-      await this.requireLive(agent);
-      if (this.activeRun(agent) || this.terminals.has(agent.agentId) || this.cleaning.has(agent.agentId) || this.signIns.has(agent.agentId)) throw new ApiError(409, "busy", "The agent's computer is busy");
-      this.cleaning.add(agent.agentId);
-    });
-    try { return await this.authStatus(agent); }
     finally { this.cleaning.delete(agent.agentId); }
   }
 
-  async submitSignIn(id: string, code: string): Promise<ClaudeSignInStatus> {
+  // The code goes in as a paste, then Enter as its own key press. On success the CLI prints the token; it goes straight
+  // to the token store, the CLI is stopped, and every agent's next run uses the token.
+  async submitSignIn(id: string, code: string): Promise<ClaudeSignInView> {
     const record = this.signIn(id);
     const agent = this.agent(record.agentId);
     await this.exclusive(agent, async () => {
       if (this.signIns.get(agent.agentId) !== record || record.submitting) throw new ApiError(409, "sign_in_busy", "Sign-in is already being finished or has ended");
       await this.requireLive(agent);
       record.submitting = true;
-      record.stream.end(code + "\n");
+      record.stream.write(code);
     });
     try {
-      const exitCode = await within(record.done, 60_000, "Claude sign-in did not finish within 60 seconds");
-      if (exitCode !== 0) throw new ApiError(400, "sign_in_failed", claudeSignInError(record.failure ?? "Claude sign-in failed. Start again.", code));
-      const status = await this.authStatus(agent, record);
-      if (!status.loggedIn) throw new ApiError(400, "sign_in_failed", "Claude is still signed out. Start again.");
+      const finished = within(record.token, 60_000, "Claude sign-in did not finish within 60 seconds");
+      void finished.catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      record.stream.write("\r");
+      let token: string;
+      try { token = await finished; }
+      catch (error) { throw error instanceof ApiError ? new ApiError(error.status, error.code, claudeSignInError(error.message, code)) : error; }
+      const view = await this.claudeToken.save(record.id, token);
       await this.cancelSignIn(id);
-      return status;
+      return view;
     } catch (error) { await this.cancelSignIn(id); throw error; }
+  }
+
+  claudeSignIn(): Promise<ClaudeSignInView> { return this.claudeToken.view(); }
+
+  async signOutClaude(id?: string): Promise<{ removed: boolean }> {
+    const removed = await this.claudeToken.remove(id);
+    if (removed) this.log({ event: "claude_token_removed", matched: id !== undefined });
+    return { removed };
   }
 
   terminalsBusy(agent: AgentConfig): boolean {

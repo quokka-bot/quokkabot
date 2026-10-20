@@ -698,6 +698,24 @@ export class TaskService {
     }
   }
 
+  // A run started after the shared Claude sign-in was stored ran with its token: it comes ahead of the agent's own.
+  private async usedSharedSignIn(startedAt: Date): Promise<boolean> {
+    return (await maybeOne(this.db, "select 1 from claude_sign_in where signed_in_at <= $1", [startedAt])) !== null;
+  }
+
+  // Claude refused the sign-in the run used. A shared one is removed for every agent (only that sign-in: a newer one
+  // stays); otherwise the agent's own sign-in is marked signed out.
+  private async claudeSignedOut(agentId: string, startedAt: Date): Promise<void> {
+    const removed = await maybeOne<{ id: string }>(this.db, "delete from claude_sign_in where signed_in_at <= $1 returning id", [startedAt]);
+    if (!removed) {
+      await this.db.query("update agents set cli_signed_in = 'no', cli_account = null, cli_plan = null where id = $1", [agentId]);
+      return;
+    }
+    // A token left behind is replaced by the owner's next sign-in.
+    await this.supervisor.signOutClaude(removed.id).catch((error: unknown) => this.log.warn({ err: String(error) }, "removing the expired Claude token failed"));
+    for (const id of await this.agentIds()) await this.audit.append(id, "system", "claude.signed_out", { allAgents: true, reason: "refused_by_claude" });
+  }
+
   private async finalizeRun(
     runId: string,
     exitCode: number | null,
@@ -745,7 +763,7 @@ export class TaskService {
     }
     const exit = classifyExit(finalState === "lost" ? null : ended.exit_code, finalResult, stderrTail);
     if (exit.kind === "failed" && exit.signedOut) {
-      await this.db.query("update agents set cli_signed_in = 'no', cli_account = null, cli_plan = null where id = $1", [task.agent_id]);
+      await this.claudeSignedOut(task.agent_id, ended.started_at);
       await this.finishTask(task, "failed", null, "Claude Code is signed out. Sign in to Claude, then try again.");
       return;
     }
@@ -753,7 +771,7 @@ export class TaskService {
       await this.finishTask(task, "failed", null, `Your Claude plan limit is reached: ${exit.reason}`);
       return;
     }
-    if (exit.kind === "completed") await this.db.query("update agents set cli_signed_in = 'yes' where id = $1", [task.agent_id]);
+    if (exit.kind === "completed" && !(await this.usedSharedSignIn(ended.started_at))) await this.db.query("update agents set cli_signed_in = 'yes' where id = $1", [task.agent_id]);
 
     // The owner already answered while the CLI was shutting down: that answer is the next run, not the end.
     if (task.pending_prompt !== null) {

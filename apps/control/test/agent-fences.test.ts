@@ -21,6 +21,7 @@ async function fixture() {
       if (sql.startsWith("select * from agents")) return { rows: row.added_at ? [{ ...row }] : [] };
       if (sql.startsWith("select id, idx, generation")) return { rows: [{ ...row }] };
       if (sql.startsWith("select id from tasks")) return { rows: [] };
+      if (sql.startsWith("select id, signed_in_at from claude_sign_in")) return { rows: [] };
       if (sql.includes("as n")) return { rows: [{ n: 0 }] };
       if (sql.startsWith("update agents set model")) { write(sql); row.name = String(values[3]); return { rows: [] }; }
       if (sql.startsWith("delete from attachments")) { write(sql); return { rows: [] }; }

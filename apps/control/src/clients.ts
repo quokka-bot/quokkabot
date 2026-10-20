@@ -3,6 +3,7 @@ import type { Readable } from "node:stream";
 import {
   ClaudeSignInStart,
   ClaudeSignInStatus,
+  ClaudeSignInView,
   BrowserCommandResult,
   type BrowserCommandRequest,
   type SecretFillRequest,
@@ -121,8 +122,12 @@ export class SupervisorClient {
   startSignIn(agentId: string): Promise<ClaudeSignInStart> {
     return this.call("POST", `/v1/agents/${agentId}/claude-sign-in`, {}, ClaudeSignInStart, 60_000);
   }
-  submitSignIn(signInId: string, code: string): Promise<ClaudeSignInStatus> {
-    return this.call("POST", `/v1/claude-sign-in/${signInId}/code`, { code }, ClaudeSignInStatus, 120_000);
+  submitSignIn(signInId: string, code: string): Promise<ClaudeSignInView> {
+    return this.call("POST", `/v1/claude-sign-in/${signInId}/code`, { code }, ClaudeSignInView, 120_000);
+  }
+  // Without an id, removes the stored Claude token whichever sign-in made it; with one, only that sign-in's token.
+  signOutClaude(signInId?: string): Promise<{ removed: boolean }> {
+    return this.call("DELETE", signInId === undefined ? "/v1/claude-token" : `/v1/claude-token/${signInId}`, undefined, z.object({ removed: z.boolean() }), 30_000);
   }
   cancelSignIn(signInId: string): Promise<unknown> {
     return this.call("DELETE", `/v1/claude-sign-in/${signInId}`, undefined, z.unknown(), 30_000);

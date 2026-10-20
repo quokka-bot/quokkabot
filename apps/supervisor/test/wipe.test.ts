@@ -52,7 +52,10 @@ describe("supervisor agent wipe without sockets", () => {
     const record = { status: RunStatus.parse({ runId, agentId, state: "exited", exitCode: 0, startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), lines: 0, lastOutputAt: null }), execId: null, cancelRequested: false };
     await supervisor.runs.reserve(record);
     await supervisor.runs.append(record, [{ stream: "stdout", line: "private transcript" }]);
+    // The Claude sign-in all agents share outlives any one agent.
+    const signIn = await supervisor.claudeToken.save("33333333-3333-4333-8333-333333333333", `sk-ant-oat01-${"a".repeat(95)}`);
     await supervisor.wipe(agent);
+    expect(await supervisor.claudeSignIn()).toEqual(signIn);
     expect(remove.mock.calls.map(call => call[0]).sort()).toEqual(["qb-browser-1", "qb-cli-1", "qb-tools-1"]);
     for (const [index, name] of names.entries()) {
       expect(await readdir(join(path, name))).toEqual([]);

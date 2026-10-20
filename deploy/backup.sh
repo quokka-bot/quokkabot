@@ -7,9 +7,9 @@
 #   quokkabot-backup status           the last result and the snapshots
 #   quokkabot-backup restore          put the latest snapshot back on this server (docs/install.md, "Restore")
 #
-# Never backed up: the CLI sign-ins (agents/*/cli-state), run and staging scratch, the desktop update feed (rebuilt
-# from releases) and /etc/quokkabot. The secrets in /etc/quokkabot (the vault key above all) and the repository
-# password are kept offline by the owner; a restore needs them.
+# Never backed up: the Claude sign-ins (claude-sign-in, agents/*/cli-state), run and staging scratch, the desktop
+# update feed (rebuilt from releases) and /etc/quokkabot. The secrets in /etc/quokkabot (the vault key above all) and
+# the repository password are kept offline by the owner; a restore needs them.
 set -euo pipefail
 
 ETC=/etc/quokkabot
