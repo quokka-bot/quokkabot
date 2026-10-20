@@ -4,7 +4,7 @@ import { startAuthentication, startRegistration } from "@simplewebauthn/browser"
 import { api } from "./api.js";
 import { ErrorLine, useAction } from "./ui.js";
 import { useDesktopFlow } from "./desktop.js";
-import { AgentAvatar } from "./avatar.js";
+import { ProductMark } from "./avatar.js";
 import { SetupOwnerName } from "./owner.js";
 
 export async function freshPasskey(): Promise<void> {
@@ -37,7 +37,7 @@ export function SignIn() {
   if (signIn.isPending) buttonText = desktop ? "Waiting for your browser…" : "Checking passkey…";
   else if (desktop && signIn.error) buttonText = "Try again";
   return <div className="auth-card">
-    <AgentAvatar index={0} size={64} />
+    <ProductMark size={64} />
     <h1>Sign in to Quokka Bot</h1>
     <p className="auth-note">{desktop ? "Approve sign-in in your browser to open your agents." : "Use your passkey to open your agents."}</p>
     {flow.prompt}
@@ -63,13 +63,13 @@ export function Setup() {
     else void navigate("/", { replace: true });
   });
   if (askName) return <div className="auth-card">
-    <AgentAvatar index={0} size={64} />
+    <ProductMark size={64} />
     <h1>What is your name?</h1>
     <p className="auth-note">It shows on your avatar in the Quokka Bot apps. You can change it in Settings.</p>
     <SetupOwnerName onSaved={() => void navigate("/", { replace: true })} />
   </div>;
   return <div className="auth-card">
-    <AgentAvatar index={0} size={64} />
+    <ProductMark size={64} />
     <h1>Make this Quokka Bot yours</h1>
     <p className="auth-note">Create a passkey to sign in and control your agents.</p>
     {!ticket ? <ErrorLine error={new Error("Setup ticket is missing. Open the link printed by the installer.")} /> : <button className="pill dark wide" disabled={setup.isPending} onClick={() => setup.mutate()}>{setup.isPending ? "Creating passkey…" : "Create passkey"}</button>}

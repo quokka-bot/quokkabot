@@ -94,11 +94,12 @@ it("starts a new history when the server changes, even for the same task id", ()
   expect(first.close).toHaveBeenCalledOnce();
   expect(subscription().options).toMatchObject({ origin: runtime.connection.origin, lastSeq: 0 });
 });
-it.each(["state", "run", "owner_request"] as const)("invalidates task, inbox and tasks for this server on %s", kind => {
+it.each(["state", "run", "owner_request"] as const)("invalidates task, inbox, tasks and agents for this server on %s", kind => {
   render("task-a"); subscription().options.onEvent(event(1, kind));
   expect(runtime.invalidate.mock.calls.map(([input]) => input)).toEqual([
     { queryKey: [runtime.connection.origin, "task", "task-a"] }, { queryKey: [runtime.connection.origin, "inbox"] },
-    { queryKey: [runtime.connection.origin, "agent-tasks"] },
+    { queryKey: [runtime.connection.origin, "agent-tasks"] }, { queryKey: [runtime.connection.origin, "agents"] },
+    { queryKey: [runtime.connection.origin, "agent"] },
   ]);
 });
 it("exposes stopped errors, clears them when live, and signs out on an expired session", () => {

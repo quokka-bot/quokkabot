@@ -4,7 +4,6 @@ import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSummary } from "@quokkabot/shared";
 import { App } from "../src/app.js";
-import { agentColour } from "../src/avatar.js";
 import { agentCapacityMessage } from "../src/agent-dialog.js";
 import { agent, agentId, json, me, taskId } from "./fixtures.js";
 
@@ -182,9 +181,69 @@ describe("agent lifecycle UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(screen.getByLabelText("Route").textContent).toBe(`/agents/${secondId}`));
   });
-  it("keeps every slot's avatar colour distinct", () => {
-    expect(new Set(Array.from({ length: 99 }, (_, index) => agentColour(index + 1))).size).toBe(99);
-    expect(agentColour(2)).not.toBe(agentColour(1));
+  it("gives each agent its own look, keeps it through a rename and moves only a working agent", async () => {
+    agents = [{ ...agent }, { ...second, activeTaskId: taskId as AgentSummary["activeTaskId"] }];
+    open(`/agents/${agentId}/settings`);
+    const list = await screen.findByRole("navigation", { name: "Agents" });
+    const avatarOf = (name: string) => within(list).getByRole("link", { name: new RegExp(name) }).querySelector<SVGSVGElement>("svg.agent-avatar");
+    await waitFor(() => expect(avatarOf("Agent 2")).not.toBeNull());
+    expect(avatarOf("Office")?.dataset).toMatchObject({ shape: "blob", colour: "violet", state: "idle" });
+    expect(avatarOf("Agent 2")?.dataset).toMatchObject({ shape: "ghost", colour: "red", state: "working" });
+    fireEvent.change(await screen.findByRole("textbox", { name: "Name" }), { target: { value: "Renamed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByText("Settings saved.");
+    const request = fetchMock.mock.calls.find(([url, init]) => url === `/api/agents/${agentId}/settings` && init?.method === "PUT");
+    // An untouched picker sends no look: the agent keeps following its slot.
+    expect(JSON.parse(String(request?.[1]?.body))).not.toHaveProperty("look");
+    await waitFor(() => expect(avatarOf("Renamed")?.dataset).toMatchObject({ shape: "blob", colour: "violet" }));
+  });
+  it("stops moving and stops saying working once the task ends", async () => {
+    agents = [{ ...agent, activeTaskId: taskId as AgentSummary["activeTaskId"] }];
+    open(`/agents/${agentId}/settings`);
+    const row = await within(await screen.findByRole("navigation", { name: "Agents" })).findByRole("link", { name: /Office/ });
+    expect(row.querySelector("svg.agent-avatar")?.getAttribute("data-state")).toBe("working");
+    expect(row.querySelector("strong")?.textContent).toBe("Office, working");
+    agents = [{ ...agent, activeTaskId: null }];
+    await client.invalidateQueries();
+    await waitFor(() => expect(row.querySelector("svg.agent-avatar")?.getAttribute("data-state")).toBe("idle"));
+    expect(row.querySelector("strong")?.textContent).toBe("Office");
+  });
+  it("sends only what the owner changed here after another app changed the agent", async () => {
+    open(`/agents/${agentId}/settings`);
+    const shapes = await screen.findByRole("group", { name: "Shape" });
+    expect((within(shapes).getByRole("radio", { name: "Blob" }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("button", { name: "Save settings" }) as HTMLButtonElement).disabled).toBe(true);
+    const current = agents[0];
+    if (!current) throw new Error("No agent");
+    Object.assign(current, { look: { shape: "cloud", colour: "grey" }, model: "claude-sonnet-5-5", effort: "low" });
+    await client.invalidateQueries();
+    await waitFor(() => expect((within(shapes).getByRole("radio", { name: "Cloud" }) as HTMLInputElement).checked).toBe(true));
+    expect((screen.getByRole("textbox", { name: "Model" }) as HTMLInputElement).value).toBe("claude-sonnet-5-5");
+    expect((screen.getByRole("combobox", { name: "Effort" }) as HTMLSelectElement).value).toBe("low");
+    fireEvent.click(within(screen.getByRole("group", { name: "Colour" })).getByRole("radio", { name: "Teal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByText("Settings saved.");
+    const request = fetchMock.mock.calls.find(([url, init]) => url === `/api/agents/${agentId}/settings` && init?.method === "PUT");
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({ look: { shape: "cloud", colour: "teal" } });
+    expect(current).toMatchObject({ model: "claude-sonnet-5-5", effort: "low" });
+  });
+  it("saves the shape and colour the owner picks and draws the agent with them", async () => {
+    open(`/agents/${agentId}/settings`);
+    const shapes = await screen.findByRole("group", { name: "Shape" });
+    fireEvent.click(within(shapes).getByRole("radio", { name: "Drop" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Colour" })).getByRole("radio", { name: "Teal" }));
+    // Each colour option shows the picked shape.
+    expect(within(screen.getByRole("group", { name: "Colour" })).getByRole("radio", { name: "Red" }).closest("label")?.querySelector<SVGSVGElement>("svg")?.dataset.shape).toBe("drop");
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByText("Settings saved.");
+    const request = fetchMock.mock.calls.find(([url, init]) => url === `/api/agents/${agentId}/settings` && init?.method === "PUT");
+    expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({ look: { shape: "drop", colour: "teal" } });
+    const row = within(screen.getByRole("navigation", { name: "Agents" })).getByRole("link", { name: /Office/ });
+    await waitFor(() => expect(row.querySelector("svg.agent-avatar")?.getAttribute("data-shape")).toBe("drop"));
+    expect(row.querySelector("svg.agent-avatar")?.getAttribute("data-colour")).toBe("teal");
+    // Another change hides the saved message until it is saved too.
+    fireEvent.click(within(shapes).getByRole("radio", { name: "Egg" }));
+    expect(screen.queryByText("Settings saved.")).toBeNull();
   });
 });
 
@@ -306,9 +365,12 @@ describe("renaming in the details panel", () => {
     fireEvent.submit(field);
     await screen.findByRole("button", { name: "Rename Invoices" });
     expect(name.value).toBe("Invoices");
+    // Nothing changed here yet: Save waits for a change, and then sends only that.
+    expect((screen.getByRole("button", { name: "Save settings" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByRole("combobox", { name: "Effort" }), { target: { value: "low" } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await screen.findByText("Settings saved.");
-    expect(JSON.parse(String(settingsRequests()[1]?.[1]?.body))).not.toHaveProperty("name");
+    expect(JSON.parse(String(settingsRequests()[1]?.[1]?.body))).toEqual({ effort: "low" });
     expect(within(screen.getByRole("navigation", { name: "Agents" })).getByText("Invoices")).toBeTruthy();
   });
   it("keeps a panel rename when Settings saves again after an earlier name change there", async () => {
@@ -326,7 +388,7 @@ describe("renaming in the details panel", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Effort" }), { target: { value: "low" } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(settingsRequests()).toHaveLength(3));
-    expect(JSON.parse(String(settingsRequests()[2]?.[1]?.body))).toEqual({ model: agent.model, effort: "low" });
+    expect(JSON.parse(String(settingsRequests()[2]?.[1]?.body))).toEqual({ effort: "low" });
     await waitFor(() => expect(screen.getByRole("button", { name: "Rename Invoices" })).toBeTruthy());
   });
 });

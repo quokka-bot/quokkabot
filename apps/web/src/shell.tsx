@@ -22,14 +22,14 @@ import { ErrorLine, Status, stateLabel, useAction, usePollInterval } from "./ui.
 // The window: agents on the left, the selected agent's chat (or one of its screens) in the middle, its details on the
 // right.
 
-function AgentRow({ agent, index }: { agent: AgentSummary; index: number }) {
+function AgentRow({ agent }: { agent: AgentSummary }) {
   const interval = usePollInterval();
   const latest = useQuery({ queryKey: ["agent-tasks", agent.id], queryFn: () => api.tasks(agent.id), refetchInterval: interval });
   const task = latest.data?.tasks[0];
   const preview = agent.waitingOnOwner > 0 ? "Waiting for you" : task ? task.result?.summary ?? task.title : agent.cliSignedIn === "yes" ? "Ready for a task" : "Sign in to Claude";
   return <NavLink to={`/agents/${agent.id}`} className={({ isActive }) => `agent-row${isActive ? " selected" : ""}`}>
-    <span className="agent-row-avatar"><AgentAvatar index={index} />{agent.waitingOnOwner > 0 && <span className="badge-dot" aria-label={`${agent.waitingOnOwner} waiting`} />}</span>
-    <span className="agent-row-text"><strong>{agent.name}</strong><span className={agent.waitingOnOwner > 0 ? "waiting-preview" : ""}>{preview}</span></span>
+    <span className="agent-row-avatar"><AgentAvatar agent={agent} working={agent.activeTaskId !== null} />{agent.waitingOnOwner > 0 && <span className="badge-dot" aria-label={`${agent.waitingOnOwner} waiting`} />}</span>
+    <span className="agent-row-text"><strong>{agent.name}{agent.activeTaskId !== null && <span className="sr-only">, working</span>}</strong><span className={agent.waitingOnOwner > 0 ? "waiting-preview" : ""}>{preview}</span></span>
   </NavLink>;
 }
 
@@ -51,7 +51,7 @@ function Sidebar() {
     {searching && <input className="sidebar-search" aria-label="Search agents" placeholder="Search" value={filter} autoFocus onChange={event => setFilter(event.target.value)} />}
     <nav className="agent-list" aria-label="Agents">
       <ErrorLine error={agents.error} />
-      {list.map(agent => <AgentRow key={agent.id} agent={agent} index={agent.index} />)}
+      {list.map(agent => <AgentRow key={agent.id} agent={agent} />)}
       {agents.data?.agents.length === 0 && <p className="sidebar-empty">No agents on this server.</p>}
     </nav>
     <button type="button" className="new-agent" aria-label="New agent" disabled={!agents.data} onClick={() => setAdding(true)}>+ New agent</button>
@@ -95,7 +95,7 @@ const SECTIONS = { computer: "Computer", terminal: "Terminal", files: "Library",
 type Section = keyof typeof SECTIONS;
 const PANEL_KEY = "quokkabot:details-panel";
 
-function Panel({ agent, index, onClose }: { agent: AgentSummary; index: number; onClose: () => void }) {
+function Panel({ agent, onClose }: { agent: AgentSummary; onClose: () => void }) {
   const [tab, setTab] = useState<"details" | "library" | "computer">("details");
   const [signingIn, setSigningIn] = useState(false);
   const logins = useQuery({ queryKey: ["logins", agent.id], queryFn: () => api.logins(agent.id) });
@@ -103,7 +103,7 @@ function Panel({ agent, index, onClose }: { agent: AgentSummary; index: number; 
   return <aside className="panel" aria-label={`${agent.name} details`}>
     <div className="panel-top"><button type="button" className="round-button" aria-label="Close details" onClick={onClose}>×</button></div>
     <div className="panel-head">
-      <AgentAvatar index={index} size={76} />
+      <AgentAvatar agent={agent} size={76} working={agent.activeTaskId !== null} />
       <AgentNameHeading agent={agent} />
       <p>{agent.model} · {agent.effort}</p>
     </div>
@@ -162,19 +162,18 @@ export function AgentScreen() {
   const togglePanel = useAction(async (open: boolean) => { localStorage.setItem(PANEL_KEY, open ? "open" : "closed"); setPanelOpen(open); await client.invalidateQueries({ queryKey: ["logins", agentId] }); });
   if (agent.error) return <ErrorLine error={agent.error} />;
   if (!agent.data) return <p className="notice info">Loading…</p>;
-  const index = agent.data.index;
   if (section !== undefined && !(section in SECTIONS)) return <Navigate to={`/agents/${agentId}`} replace />;
   return <div className="agent-screen">
     <div className="center">
       <header className="center-top">
         {section ? <Link className="back-link" to={`/agents/${agentId}`}>‹ Chat</Link> : <span />}
-        <span className="title-pill"><AgentAvatar index={index} size={22} />{section ? `${agent.data.name} · ${SECTIONS[section as Section]}` : agent.data.name}</span>
+        <span className="title-pill"><AgentAvatar agent={agent.data} size={22} working={agent.data.activeTaskId !== null} />{section ? `${agent.data.name} · ${SECTIONS[section as Section]}` : agent.data.name}</span>
         {panelOpen ? <span /> : <button type="button" className="round-button" aria-label="Show details" onClick={() => togglePanel.mutate(true)}>ⓘ</button>}
       </header>
       {agent.data.removing && <p className="notice info">Removal is in progress. <Link to={`/agents/${agentId}/settings`}>Retry Remove agent</Link> to finish.</p>}
-      {section ? <div className="section-scroll"><div className="section-column"><SectionView agent={agent.data} section={section as Section} /></div></div> : <AgentChat key={agent.data.id} agent={agent.data} index={index} />}
+      {section ? <div className="section-scroll"><div className="section-column"><SectionView agent={agent.data} section={section as Section} /></div></div> : <AgentChat key={agent.data.id} agent={agent.data} />}
     </div>
-    {panelOpen && <Panel key={agent.data.id} agent={agent.data} index={index} onClose={() => togglePanel.mutate(false)} />}
+    {panelOpen && <Panel key={agent.data.id} agent={agent.data} onClose={() => togglePanel.mutate(false)} />}
   </div>;
 }
 

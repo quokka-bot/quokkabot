@@ -15,8 +15,3 @@ export const colors = {
   amber: "#B06D00",
 } as const;
 
-// The agent avatars' colours, in slot order (apps/web/src/avatar.tsx).
-const COLOURS = ["#8b5cf6", "#ef4444", "#ec4899", "#a16207", "#6b7280", "#111827", "#f97316", "#0ea5e9"];
-export function agentColour(index: number): string {
-  return COLOURS[index - 1] ?? `hsl(${(index * 137.508) % 360}, 60%, 45%)`;
-}

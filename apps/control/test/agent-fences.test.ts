@@ -11,7 +11,7 @@ const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 
 async function fixture() {
   const row = { id: agentId, idx: 1, generation: 2, name: "New occupant", model: "claude-opus-4-6", effort: "high", cli_signed_in: "no", cli_account: null, cli_plan: null,
-    added_at: new Date() as Date | null, removing_at: null, killed_at: null };
+    look_shape: null, look_colour: null, added_at: new Date() as Date | null, removing_at: null, killed_at: null };
   const write = vi.fn();
   const create = vi.fn(async () => ({ id: attachmentId, agent_id: agentId, title: "Task", state: "queued", blocked_reason: null, model: row.model, effort: row.effort,
     created_at: new Date(), updated_at: new Date(), result_summary: null, error: null }));

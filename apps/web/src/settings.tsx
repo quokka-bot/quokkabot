@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { DesktopLinkDecideRequest, Effort, type AgentSummary, type SessionView } from "@quokkabot/shared";
+import { agentLook } from "@quokkabot/client";
+import { DesktopLinkDecideRequest, Effort, type AgentLook, type AgentSummary, type SessionView } from "@quokkabot/shared";
 import { encode } from "uqr";
 import { api } from "./api.js";
 import { RemoveAgent } from "./agent-dialog.js";
 import { storeAgent } from "./agent-name.js";
 import { AiConsentSetting } from "./ai-consent.js";
+import { LookPicker } from "./avatar.js";
 import { ClaudeSetting } from "./claude-sign-in.js";
 import { LINK_CODE_KEY } from "./link.js";
 import { OwnerNameSetting } from "./owner.js";
@@ -100,23 +102,30 @@ export function OwnerSettings() {
 }
 
 export function Settings({ agent }: { agent: AgentSummary }) {
-  // Null until the owner types here: the field shows a rename made in the details panel, and Save sends a name only
-  // when the owner typed one, then follows the agent's name again.
+  // Each field is null until the owner changes it here: the form shows the agent's current settings, a rename in the
+  // details panel or a change from another app included, and Save sends only what the owner changed here, then follows
+  // the agent again.
   const [typedName, setName] = useState<string | null>(null);
-  const [model, setModel] = useState(agent.model);
-  const [effort, setEffort] = useState(agent.effort);
+  const [typedModel, setModel] = useState<string | null>(null);
+  const [pickedEffort, setEffort] = useState<Effort | null>(null);
+  const [pickedLook, setPickedLook] = useState<AgentLook | null>(null);
+  const changed = typedName !== null || typedModel !== null || pickedEffort !== null || pickedLook !== null;
   const client = useQueryClient();
   const save = useAction(async () => {
-    const sent = typedName?.trim();
-    await storeAgent(client, await api.settings(agent.id, model.trim(), effort, sent));
-    setName(current => current?.trim() === sent ? null : current);
+    const sent = { name: typedName?.trim(), model: typedModel?.trim(), effort: pickedEffort ?? undefined, look: pickedLook ?? undefined };
+    await storeAgent(client, await api.settings(agent.id, sent));
+    setName(current => current?.trim() === sent.name ? null : current);
+    setModel(current => current?.trim() === sent.model ? null : current);
+    setEffort(current => current === (sent.effort ?? null) ? null : current);
+    setPickedLook(current => current !== null && current.shape === sent.look?.shape && current.colour === sent.look.colour ? null : current);
   });
   return <>
     <h2>Settings</h2><form className="card settings-form" onSubmit={event => { event.preventDefault(); save.mutate(); }}>
       <label>Name<input value={typedName ?? agent.name} onChange={event => setName(event.target.value)} required maxLength={40} /></label>
-      <label>Model<input value={model} onChange={event => setModel(event.target.value)} autoCapitalize="none" autoCorrect="off" required maxLength={81} /></label><p className="meta">Current default: {agent.model}</p>
-      <label>Effort<select value={effort} onChange={event => setEffort(Effort.parse(event.target.value))}>{Effort.options.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-      <button className="primary" disabled={save.isPending}>Save settings</button><ErrorLine error={save.error} />{save.isSuccess && <p role="status">Settings saved.</p>}
+      <LookPicker look={pickedLook ?? agentLook(agent)} onChange={setPickedLook} />
+      <label>Model<input value={typedModel ?? agent.model} onChange={event => setModel(event.target.value)} autoCapitalize="none" autoCorrect="off" required maxLength={81} /></label><p className="meta">Current default: {agent.model}</p>
+      <label>Effort<select value={pickedEffort ?? agent.effort} onChange={event => setEffort(Effort.parse(event.target.value))}>{Effort.options.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+      <button className="primary" disabled={save.isPending || !changed}>Save settings</button><ErrorLine error={save.error} />{save.isSuccess && !changed && <p role="status">Settings saved.</p>}
     </form>
     <AiConsentSetting agent={agent} />
     <OwnerSettings />

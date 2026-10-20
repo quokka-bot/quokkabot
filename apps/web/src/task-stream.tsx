@@ -37,6 +37,10 @@ export function useTaskStream(taskId: string | null) {
         if (["state", "run", "owner_request"].includes(envelope.event.kind)) {
           void client.invalidateQueries({ queryKey: ["task", openTaskId] });
           void client.invalidateQueries({ queryKey: ["inbox"] });
+          // The agent's summary says whether it is working and how much waits for the owner: the avatars and the
+          // sidebar follow the stream instead of the next poll.
+          void client.invalidateQueries({ queryKey: ["agents"] });
+          void client.invalidateQueries({ queryKey: ["agent"] });
         }
       } catch (eventError) {
         setError(eventError);

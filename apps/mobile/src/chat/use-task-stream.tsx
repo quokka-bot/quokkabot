@@ -44,6 +44,9 @@ export function useTaskStream(taskId: string | null) {
           void client.invalidateQueries({ queryKey: [connection.origin, "task", taskId] });
           void client.invalidateQueries({ queryKey: [connection.origin, "inbox"] });
           void client.invalidateQueries({ queryKey: [connection.origin, "agent-tasks"] });
+          // Whether the agent is working: its avatars follow the stream instead of the next poll.
+          void client.invalidateQueries({ queryKey: [connection.origin, "agents"] });
+          void client.invalidateQueries({ queryKey: [connection.origin, "agent"] });
         }
       },
       onState: (next) => { if (alive) { setState(next); if (next === "live") setError(null); } },

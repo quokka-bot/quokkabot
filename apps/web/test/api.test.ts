@@ -38,7 +38,7 @@ describe("agent generation headers", () => {
     if (source === "list") await api.agents();
     else if (source === "summary") await api.agent(agent.id);
     else if (source === "create") await api.createAgent("Office");
-    else await api.settings(agent.id, agent.model, agent.effort);
+    else await api.settings(agent.id, { effort: agent.effort });
     fetchMock.mockResolvedValueOnce(json(task));
     await api.createTask(agent.id, "Hello", "request-key");
     expect(sentHeader(1)).toBe("7");
