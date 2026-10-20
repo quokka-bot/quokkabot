@@ -6,7 +6,7 @@ import {
   RelPath, ReplyRequest, ReactionRequest, type ReactionEmoji, OwnerNameRequest, SetupOptionsRequest, SetupVerifyRequest, TakeoverDoneRequest,
   TakeoverRequest, Task, TaskDetail, TerminalClientFrame, TerminalServerFrame,
   ViewTicketResponse, DesktopLinkPending, DesktopLinkDecideRequest, DesktopLinkApproveVerifyRequest,
-  SessionView, LoginView, SaveLoginRequest, UpdateLoginRequest, ConnectorsResponse, ConnectStartResponse, type AgentLook } from "@quokkabot/shared";
+  SessionView, LoginView, SaveLoginRequest, UpdateLoginRequest, ConnectorsResponse, ConnectStartResponse, type AgentLook, type Effort } from "@quokkabot/shared";
 import type { PublicKeyCredentialCreationOptionsJSON, PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/browser";
 
 export const UNAUTHORIZED_EVENT = "quokkabot:unauthorized";
@@ -127,7 +127,8 @@ export const api = {
   inbox: () => request("/inbox", InboxResponse),
   aiConsent: (id: string) => request(`${agentPath(id)}/ai-consent`, AiConsentView),
   setAiConsent: (id: string, input: AiConsentRequest) => request(`${agentPath(id)}/ai-consent`, AiConsentView, "PUT", AiConsentRequest.parse(input)),
-  settings: async (id: string, model: string, effort: string, name?: string, look?: AgentLook | null) => rememberAgent(await request(`${agentPath(id)}/settings`, AgentSummary, "PUT", AgentSettingsRequest.parse({ model, effort, ...(name === undefined ? {} : { name }), ...(look === undefined ? {} : { look }) }))),
+  // Sends only the fields given: a setting another app changed a moment ago stays as it is.
+  settings: async (id: string, changes: { name?: string | undefined; model?: string | undefined; effort?: Effort | undefined; look?: AgentLook | null | undefined }) => rememberAgent(await request(`${agentPath(id)}/settings`, AgentSummary, "PUT", AgentSettingsRequest.parse(changes))),
   // Sends only the name: a model or effort changed in another app a moment ago stays as it is.
   rename: async (id: string, name: string) => rememberAgent(await request(`${agentPath(id)}/settings`, AgentSummary, "PUT", AgentSettingsRequest.parse({ name }))),
   computer: (id: string, action: "start" | "stop") => request(`${agentPath(id)}/computer/${action}`, ComputerView, "POST", {}),
