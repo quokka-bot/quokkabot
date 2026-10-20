@@ -14,6 +14,7 @@ let clients: QueryClient[];
 let width = 10;
 let height = 10;
 const created = vi.fn();
+const sent = vi.fn();
 const uploadImageRequest = api.uploadImage;
 const createTaskRequest = api.createTask;
 const originalUrl = URL;
@@ -26,7 +27,7 @@ class TestImage {
 const revoke = vi.fn();
 const createUrl = vi.fn(() => `blob:preview-${crypto.randomUUID()}`);
 beforeEach(() => {
-  clients = []; width = 10; height = 10; created.mockReset(); revoke.mockReset(); createUrl.mockClear();
+  clients = []; width = 10; height = 10; created.mockReset(); sent.mockReset(); revoke.mockReset(); createUrl.mockClear();
   vi.stubGlobal("Image", TestImage);
   vi.stubGlobal("URL", class extends originalUrl { static override createObjectURL = createUrl; static override revokeObjectURL = revoke; });
   vi.spyOn(api, "uploadImage").mockResolvedValue(attachment);
@@ -37,7 +38,7 @@ beforeEach(() => {
 afterEach(() => { clients.forEach(client => client.clear()); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 function composer(mode: "new" | "reply" | "follow-up" = "new") {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } }); clients.push(client);
-  return render(<QueryClientProvider client={client}><MemoryRouter><Composer agent={agent} task={mode === "new" ? null : mode === "reply" ? task : { ...task, state: "completed" }} ready openQuestion={mode === "reply" ? ownerRequest : null} waiting={mode === "reply"} startNew={vi.fn()} onCreated={created} /></MemoryRouter></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><MemoryRouter><Composer agent={agent} task={mode === "new" ? null : mode === "reply" ? task : { ...task, state: "completed" }} ready openQuestion={mode === "reply" ? ownerRequest : null} waiting={mode === "reply"} startNew={vi.fn()} onCreated={created} onSent={sent} /></MemoryRouter></QueryClientProvider>);
 }
 function paste(file: File) {
   return fireEvent.paste(screen.getByRole("textbox"), { clipboardData: { items: [{ kind: "file", getAsFile: () => file }] } });
@@ -147,6 +148,7 @@ describe("composer images", () => {
     if (mode === "new") await waitFor(() => expect(api.createTask).toHaveBeenCalledWith(agent.id, "", expect.any(String), [attachment.id]));
     else await waitFor(() => expect(mode === "reply" ? api.reply : api.message).toHaveBeenCalledWith(taskId, "", [attachment.id]));
     await waitFor(() => expect(screen.queryByLabelText("Attachment screen.png")).toBeNull());
+    expect(sent).toHaveBeenCalledTimes(1);
   });
   it("keeps drafts and previews when a send fails and revokes previews on unmount", async () => {
     vi.mocked(api.createTask).mockRejectedValue(new Error("Try again later."));
@@ -154,6 +156,7 @@ describe("composer images", () => {
     await waitFor(() => expect(screen.queryByRole("status", { name: "Uploading screen.png" })).toBeNull());
     fireEvent.click(screen.getByLabelText("Send")); await screen.findByText("Try again later.");
     expect(screen.getByLabelText("Attachment screen.png")).toBeTruthy();
+    expect(sent).not.toHaveBeenCalled();
     view.unmount(); expect(revoke).toHaveBeenCalled();
   });
   it("shows a removable error for a ninth image", async () => {
@@ -170,6 +173,8 @@ describe("owner image bubbles", () => {
     render(<OwnerImages attachments={[attachment]} />);
     const thumbnail = screen.getByRole("img", { name: "screen.png" });
     expect(thumbnail.getAttribute("src")).toBe(`/api/attachments/${attachment.id}/content`);
+    // Its stored size reserves its space before it loads, so the chat does not move when it arrives.
+    expect([thumbnail.getAttribute("width"), thumbnail.getAttribute("height")]).toEqual(["10", "10"]);
     fireEvent.click(screen.getByLabelText("View screen.png"));
     expect(within(screen.getByRole("dialog")).getByRole("img")).toBeTruthy();
     fireEvent.keyDown(window, { key: "Escape" }); expect(screen.queryByRole("dialog")).toBeNull();

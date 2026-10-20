@@ -1,10 +1,10 @@
-import { Fragment, useMemo, useRef, useState, type ComponentRef } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, Stack } from "expo-router";
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TERMINAL_TASK_STATES, type AgentsResponse, type AgentSummary, type DomainRequestView, type InboxResponse, type OwnerRequest, type Task } from "@quokkabot/shared";
-import { agentNameEdit, askedLine, chatItems, listSites, liveTask, messageReactions, sitesLine, timeLabel, withAgent, workingStatus, type StepLine } from "@quokkabot/client";
+import { agentNameEdit, askedLine, chatItems, chatOpened, listSites, liveTask, messageReactions, sitesLine, timeLabel, withAgent, workingStatus, type StepLine } from "@quokkabot/client";
 import { DomainRequestCard, OpenOnWeb, RequestCard } from "../cards/requests";
 import { useSignedIn } from "../session";
 import { AgentAvatar, Button, ErrorLine, Notice } from "../ui/kit";
@@ -14,6 +14,7 @@ import { Composer } from "./composer";
 import { Markdown } from "./markdown";
 import { bytesLabel } from "./report";
 import { useAction } from "./use-action";
+import { useChatScroll } from "./use-chat-scroll";
 import { useTaskStream } from "./use-task-stream";
 
 const DIVIDER_GAP_MS = 15 * 60_000;
@@ -184,10 +185,11 @@ function Chat({ agent }: { agent: AgentSummary }) {
   const { api, connection } = useSignedIn();
   const insets = useSafeAreaInsets();
   const [selection, setSelection] = useState<string | null | undefined>(undefined);
-  const tasks = useQuery({ queryKey: [connection.origin, "agent-tasks", agent.id], queryFn: () => api.tasks(agent.id), refetchInterval: 5000 });
+  // staleTime 0: opening the chat or another task fetches the list and the task again, and shows once they are in.
+  const tasks = useQuery({ queryKey: [connection.origin, "agent-tasks", agent.id], queryFn: () => api.tasks(agent.id), refetchInterval: 5000, staleTime: 0 });
   const list = tasks.data?.tasks ?? [];
   const selectedId = selection === undefined ? list[0]?.id ?? null : selection;
-  const detail = useQuery({ queryKey: [connection.origin, "task", selectedId], queryFn: () => api.task(selectedId as string), enabled: selectedId !== null, refetchInterval: 5000 });
+  const detail = useQuery({ queryKey: [connection.origin, "task", selectedId], queryFn: () => api.task(selectedId as string), enabled: selectedId !== null, refetchInterval: 5000, staleTime: 0 });
   const stream = useTaskStream(selectedId);
   // The task as loaded, or newer: a state event the stream delivered after the load.
   const loaded = selectedId === null ? null : detail.data ?? null;
@@ -198,11 +200,14 @@ function Chat({ agent }: { agent: AgentSummary }) {
   const openRequests = detail.data?.openRequests.filter(request => request.answeredAt === null) ?? [];
   const openSites = inbox.data?.items.some(item => item.kind === "domain_request" && item.request.taskId === selectedId) ?? false;
   const openQuestion = openRequests.find(request => request.kind === "question") ?? openRequests[0] ?? null;
-  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  // What the owner opened: the latest task follows the task list, so a new task there does not open the chat again.
+  const view = selection === undefined ? "latest" : selection ?? "new";
+  const ready = chatOpened({ tasks, task: selectedId === null ? null : detail, events: stream.events, streamFailed: stream.error !== null });
+  const scroll = useChatScroll(view, ready);
   return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={insets.top + 44}>
-    <ScrollView ref={scroll} style={styles.screen} contentContainerStyle={styles.chat} keyboardShouldPersistTaps="handled"
-      onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: true })} accessibilityLabel={`${agent.name} chat`}>
-      {tasks.isPending && <Notice>Loading…</Notice>}
+    {scroll.opening && <View style={styles.opening} pointerEvents="none"><Notice>Loading…</Notice></View>}
+    <ScrollView {...scroll.scrollProps} style={[styles.screen, scroll.opening && styles.hidden]} contentContainerStyle={styles.chat} keyboardShouldPersistTaps="handled"
+      accessibilityElementsHidden={scroll.opening} accessibilityLabel={`${agent.name} chat`}>
       <ErrorLine error={tasks.error ?? inbox.error} />
       {list.length === 0 && !tasks.isPending && !tasks.error && (agent.cliSignedIn !== "yes" ? <Notice>{SIGNED_OUT}</Notice> : <View style={styles.empty}>
         <AgentAvatar index={agent.index} size={72} /><Text style={styles.name}>{agent.name}</Text>
@@ -212,18 +217,18 @@ function Chat({ agent }: { agent: AgentSummary }) {
         divider={i === 0 || Date.parse(task.createdAt) - Date.parse(earlier[i - 1]?.updatedAt ?? task.createdAt) > DIVIDER_GAP_MS} />)}
       {selection === null && list.length > 0 && <Notice>New task</Notice>}
       <ErrorLine error={detail.error} />
-      {selectedId && detail.isPending && <Notice>Loading…</Notice>}
       {current && <CurrentTask key={current.id} agent={agent} task={current} openRequests={openRequests} earliestAt={earlier.at(-1)?.updatedAt ?? null} stream={stream} inbox={inbox.data} />}
       {position > 0 && <Button title="Back to the latest task" kind="quiet" onPress={() => setSelection(undefined)} />}
     </ScrollView>
     {agent.computer.attendedOpen && <AttendedBar agentId={agent.id} />}
     <View style={{ paddingBottom: insets.bottom }}><Composer agent={agent} task={current} ready={!tasks.isPending && !tasks.error && (selectedId === null || current !== null)}
-      openQuestion={openQuestion} waiting={openRequests.length > 0 || openSites} startNew={() => setSelection(null)} onCreated={task => setSelection(task.id)} /></View>
+      openQuestion={openQuestion} waiting={openRequests.length > 0 || openSites} startNew={() => setSelection(null)} onCreated={task => { scroll.keepShown(task.id); setSelection(task.id); }} onSent={() => scroll.sent(view)} /></View>
   </KeyboardAvoidingView>;
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background }, chat: { padding: 16, paddingBottom: 24 }, loading: { padding: 20 },
+  hidden: { opacity: 0 }, opening: { position: "absolute", top: 0, left: 0, right: 0, zIndex: 1, padding: 20 },
   headerButton: { color: colors.purple, fontSize: 17, paddingVertical: 8 }, time: { color: colors.muted, textAlign: "center", fontSize: 12, marginVertical: 16 },
   steps: { marginVertical: 4 }, stepsToggle: { paddingVertical: 12, paddingHorizontal: 4 }, stepList: { paddingLeft: 12, gap: 8, borderLeftWidth: 2, borderLeftColor: colors.line, marginBottom: 10 },
   meta: { color: colors.muted, fontSize: 13 }, note: { fontStyle: "italic" }, working: { flexDirection: "row", alignItems: "center", gap: 10, marginVertical: 12 }, flex: { flex: 1 },

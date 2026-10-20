@@ -5,35 +5,37 @@ import { streamRows, TaskEventSequencer } from "@quokkabot/client";
 import { api, taskEventsUrl } from "./api.js";
 import { ErrorLine } from "./ui.js";
 
-export function useTaskStream(taskId: string) {
+// `taskId` null: no task is open, and the stream is closed.
+export function useTaskStream(taskId: string | null) {
   const client = useQueryClient();
-  const [events, setEvents] = useState<TaskEventEnvelope[]>([]);
-  const [error, setError] = useState<unknown>(null);
   const [connection, setConnection] = useState("Connecting");
   const [revision, setRevision] = useState(0);
-  const sequencer = useRef(new TaskEventSequencer(taskId));
-  if (sequencer.current.taskId !== taskId) sequencer.current = new TaskEventSequencer(taskId);
+  // One sequencer per opening of a task, kept in state: a render React drops (a navigation it restarts) leaves the
+  // open stream's sequencer in place. Events and errors belong to it, so another task, or the same task opened again,
+  // starts empty in the same render instead of showing the previous task's events until an effect clears them.
+  const [scope, setScope] = useState(() => ({ taskId, sequence: new TaskEventSequencer(taskId ?? "") }));
+  if (scope.taskId !== taskId) setScope({ taskId, sequence: new TaskEventSequencer(taskId ?? "") });
+  const [output, setOutput] = useState<{ sequence: TaskEventSequencer; events: TaskEventEnvelope[] }>({ sequence: scope.sequence, events: [] });
+  const [failure, setFailure] = useState<{ sequence: TaskEventSequencer; error: unknown }>({ sequence: scope.sequence, error: null });
   // Stream failures in a row since the last open; the first one is retried quietly.
   const failures = useRef(0);
+  useEffect(() => { failures.current = 0; }, [scope]);
   useEffect(() => {
-    setEvents([]);
-    setError(null);
-    failures.current = 0;
-  }, [taskId]);
-  useEffect(() => {
+    const { taskId: openTaskId, sequence } = scope;
+    if (openTaskId === null) return;
     let alive = true;
     let retry: ReturnType<typeof setTimeout> | undefined;
-    const sequence = sequencer.current;
-    const source = new EventSource(taskEventsUrl(taskId, sequence.lastSeq));
+    const setError = (error: unknown) => setFailure({ sequence, error });
+    const source = new EventSource(taskEventsUrl(openTaskId, sequence.lastSeq));
     setConnection("Connecting");
     source.onopen = () => { failures.current = 0; setConnection("Live"); setError(null); };
     source.onmessage = message => {
       try {
         const envelope = sequence.accept(message.lastEventId, message.data as string);
         if (envelope === null) return;
-        setEvents(previous => [...previous, envelope]);
+        setOutput(previous => ({ sequence, events: previous.sequence === sequence ? [...previous.events, envelope] : [envelope] }));
         if (["state", "run", "owner_request"].includes(envelope.event.kind)) {
-          void client.invalidateQueries({ queryKey: ["task", taskId] });
+          void client.invalidateQueries({ queryKey: ["task", openTaskId] });
           void client.invalidateQueries({ queryKey: ["inbox"] });
         }
       } catch (eventError) {
@@ -56,8 +58,12 @@ export function useTaskStream(taskId: string) {
       retry = setTimeout(() => { if (alive) setRevision(value => value + 1); }, Math.min(15_000, 500 * 2 ** (failures.current - 1)));
     };
     return () => { alive = false; clearTimeout(retry); source.close(); };
-  }, [taskId, client, revision]);
-  return { events, error, connection, lastSeq: sequencer.current.lastSeq, reconnect: () => { failures.current = 0; setRevision(value => value + 1); } };
+  }, [scope, client, revision]);
+  const current = scope.sequence;
+  return {
+    events: output.sequence === current ? output.events : [], error: failure.sequence === current ? failure.error : null,
+    connection, lastSeq: current.lastSeq, reconnect: () => { failures.current = 0; setRevision(value => value + 1); },
+  };
 }
 
 export function TaskEventStream({ taskId, agentId, openRequestIds, stream }: {

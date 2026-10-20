@@ -18,7 +18,8 @@ export function useTaskStream(taskId: string | null) {
   // A fresh scope on every task switch, including A -> new task -> A. Comparing just the task id would append
   // replayed history to A's old events if the intermediate screen had received no events.
   const [output, setOutput] = useState<{ scope: typeof cursor.current; events: TaskEventEnvelope[] }>({ scope: cursor.current, events: [] });
-  const [error, setError] = useState<Error | null>(null);
+  // An error belongs to its scope like the events, so another task's error never shows here.
+  const [failure, setFailure] = useState<{ scope: typeof cursor.current; error: Error | null }>({ scope: cursor.current, error: null });
   const [state, setState] = useState<"connecting" | "live" | "reconnecting" | "stopped">("connecting");
   const [revision, setRevision] = useState(0);
   const focused = useIsFocused();
@@ -32,6 +33,7 @@ export function useTaskStream(taskId: string | null) {
     if (taskId === null || !visible) return;
     let alive = true;
     const sequence = cursor.current;
+    const setError = (error: Error | null) => setFailure({ scope: sequence, error });
     setError(null);
     const close = openTaskStream({ origin: connection.origin, token: connection.token, taskId, lastSeq: sequence.lastSeq,
       onEvent: (envelope) => {
@@ -50,6 +52,6 @@ export function useTaskStream(taskId: string | null) {
     });
     return () => { alive = false; close(); };
   }, [client, connection.origin, connection.token, key, revision, signOut, taskId, visible]);
-  return { events: output.scope === cursor.current ? output.events : [], error, connection: state, lastSeq: cursor.current.lastSeq,
+  return { events: output.scope === cursor.current ? output.events : [], error: failure.scope === cursor.current ? failure.error : null, connection: state, lastSeq: cursor.current.lastSeq,
     reconnect: () => setRevision(value => value + 1) };
 }

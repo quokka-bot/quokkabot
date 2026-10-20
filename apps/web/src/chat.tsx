@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { REACTION_EMOJIS, TERMINAL_TASK_STATES, type AgentSummary, type DomainRequestView, type OwnerRequest, type ReactionEmoji, type Task } from "@quokkabot/shared";
-import { askedLine, chatItems, listSites, liveTask, messageReactions, sitesLine, timeLabel, workingStatus, type StepLine } from "@quokkabot/client";
+import { askedLine, chatItems, chatOpened, listSites, liveTask, messageReactions, sitesLine, timeLabel, workingStatus, type StepLine } from "@quokkabot/client";
 import { IMAGE_ACCEPT, ImageChips, OwnerImages, useChatImages } from "./chat-images.js";
 import { AiConsentCard, aiConsentOf, needsAiConsent } from "./ai-consent.js";
 import { api } from "./api.js";
 import { AgentAvatar } from "./avatar.js";
+import { useChatScroll } from "./chat-scroll.js";
 import { ClaudeSignInCard } from "./claude-sign-in.js";
 import { DownloadLink } from "./download-link.js";
 import { Markdown } from "./markdown.js";
@@ -85,8 +86,9 @@ function Bubble({ from, children, live = false, reaction, reactTo }: {
   </div></div>;
 }
 
-function CurrentTask({ agent, index, task, snapshotSeq, openRequests, earliestAt }: { agent: AgentSummary; index: number; task: Task; snapshotSeq: number; openRequests: OwnerRequest[]; earliestAt: string | null }) {
-  const stream = useTaskStream(task.id);
+function CurrentTask({ agent, index, task, snapshotSeq, openRequests, earliestAt, stream }: {
+  agent: AgentSummary; index: number; task: Task; snapshotSeq: number; openRequests: OwnerRequest[]; earliestAt: string | null; stream: ReturnType<typeof useTaskStream>;
+}) {
   const interval = usePollInterval();
   const inbox = useQuery({ queryKey: ["inbox"], queryFn: api.inbox, refetchInterval: interval });
   const items = useMemo(() => chatItems(stream.events), [stream.events]);
@@ -105,8 +107,6 @@ function CurrentTask({ agent, index, task, snapshotSeq, openRequests, earliestAt
   // While the agent works: its latest line between tools, else what its latest tool does.
   const lastItem = items.at(-1);
   const currentSteps = busy && lastItem?.kind === "steps" ? lastItem.lines : [];
-  const end = useRef<HTMLDivElement>(null);
-  useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [items.length, openRequests.length, busy]);
   let lastOwnerAt: string | null = null;
   return <>
     {items.map(item => {
@@ -151,7 +151,6 @@ function CurrentTask({ agent, index, task, snapshotSeq, openRequests, earliestAt
       : !items.some(item => item.kind === "notice" && item.text === task.error) && <p className="notice error">{task.error}</p>)}
     <ErrorLine error={stream.error} />
     {Boolean(stream.error) && <button type="button" className="pill" onClick={stream.reconnect}>Reconnect</button>}
-    <div ref={end} />
   </>;
 }
 
@@ -175,8 +174,9 @@ function EarlierTask({ task, onOpen, divider }: { task: Task; onOpen: () => void
 }
 
 // `waiting`: the task has open cards. A message then answers its question and skips every other card.
-export function Composer({ agent, task, ready, openQuestion, waiting, startNew, onCreated }: {
-  agent: AgentSummary; task: Task | null; ready: boolean; openQuestion: OwnerRequest | null; waiting: boolean; startNew: () => void; onCreated: (task: Task) => void;
+// `onSent`: the server accepted the message. The send calls the `onSent` it started with.
+export function Composer({ agent, task, ready, openQuestion, waiting, startNew, onCreated, onSent }: {
+  agent: AgentSummary; task: Task | null; ready: boolean; openQuestion: OwnerRequest | null; waiting: boolean; startNew: () => void; onCreated: (task: Task) => void; onSent: () => void;
 }) {
   const [text, setText] = useState("");
   const input = useRef<HTMLTextAreaElement>(null);
@@ -204,6 +204,7 @@ export function Composer({ agent, task, ready, openQuestion, waiting, startNew, 
       else if (active && waiting) await api.reply(task.id, message, attachmentIds);
       else if (TERMINAL_TASK_STATES.has(task.state)) await api.message(task.id, message, attachmentIds);
       else throw new Error(`${agent.name} is still working on this task.`);
+      onSent();
       setText("");
       draft.clear();
       draftKey.current = crypto.randomUUID();
@@ -259,21 +260,26 @@ export function AgentChat({ agent, index }: { agent: AgentSummary; index: number
   // The composer answers the open question; a message skips every other open card.
   const openQuestion = openRequests.find(request => request.kind === "question") ?? openRequests[0] ?? null;
   const open = (taskId: string) => { void navigate(`/agents/${agent.id}?task=${taskId}`); };
+  const stream = useTaskStream(selectedId);
+  // What the owner opened: the latest task follows the task list, so a new task there does not open the chat again.
+  const view = params.get("task") ?? (wantsNew ? "new" : "latest");
+  const ready = chatOpened({ tasks, task: selectedId === null ? null : detail, events: stream.events, streamFailed: Boolean(stream.error) });
+  const scroll = useChatScroll(view, ready);
   return <div className="chat">
-    <div className="chat-scroll">
-      <div className="chat-column">
-        {tasks.isPending && <p className="notice info">Loading…</p>}
+    {scroll.opening && <p className="notice info chat-loading" role="status">Loading…</p>}
+    <div ref={scroll.scroller} className="chat-scroll" aria-busy={scroll.opening}>
+      <div ref={scroll.content} className={`chat-column${scroll.opening ? " opening" : ""}`}>
         <ErrorLine error={tasks.error} />
         {list.length === 0 && !tasks.isPending && (agent.cliSignedIn !== "yes" ? <ClaudeSignInCard key={agent.id} agent={agent} /> : <div className="chat-empty"><AgentAvatar index={index} size={72} /><h1>{agent.name}</h1><p>Give {agent.name} a task. It works on its own computer and asks you when it needs something.</p></div>)}
         {earlier.map((task, i) => <EarlierTask key={task.id} task={task} onOpen={() => open(task.id)} divider={i === 0 || Date.parse(task.createdAt) - Date.parse(earlier[i - 1]?.updatedAt ?? task.createdAt) > DIVIDER_GAP_MS} />)}
         {wantsNew && list.length > 0 && <p className="notice info">New task</p>}
         <ErrorLine error={detail.error} />
-        {current && detail.data && <CurrentTask key={current.id} agent={agent} index={index} task={current} snapshotSeq={detail.data.lastSeq} openRequests={openRequests} earliestAt={earlier.at(-1)?.updatedAt ?? null} />}
+        {current && detail.data && <CurrentTask key={current.id} agent={agent} index={index} task={current} snapshotSeq={detail.data.lastSeq} openRequests={openRequests} earliestAt={earlier.at(-1)?.updatedAt ?? null} stream={stream} />}
         {position > 0 && <p className="notice info"><Link to={`/agents/${agent.id}`}>Back to the latest task</Link></p>}
       </div>
     </div>
     <div className="chat-column composer-column">
-      <Composer key={agent.id} agent={agent} task={current} ready={selectedId === null || current !== null} openQuestion={openQuestion} waiting={openRequests.length > 0 || openSites} startNew={() => { void navigate(`/agents/${agent.id}?new=1`); }} onCreated={task => open(task.id)} />
+      <Composer key={agent.id} agent={agent} task={current} ready={selectedId === null || current !== null} openQuestion={openQuestion} waiting={openRequests.length > 0 || openSites} startNew={() => { void navigate(`/agents/${agent.id}?new=1`); }} onCreated={task => { scroll.keepShown(task.id); open(task.id); }} onSent={() => scroll.sent(view)} />
     </div>
   </div>;
 }

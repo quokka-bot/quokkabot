@@ -9,9 +9,10 @@ import { composerState, sendDraft } from "./composer-state";
 import { draftId } from "./id";
 import { useAction } from "./use-action";
 
-export function Composer({ agent, task, ready, openQuestion, waiting, startNew, onCreated }: {
+// `onSent`: the server accepted the message. The send calls the `onSent` it started with.
+export function Composer({ agent, task, ready, openQuestion, waiting, startNew, onCreated, onSent }: {
   agent: AgentSummary; task: Task | null; ready: boolean; openQuestion: OwnerRequest | null; waiting: boolean;
-  startNew: () => void; onCreated: (task: Task) => void;
+  startNew: () => void; onCreated: (task: Task) => void; onSent: () => void;
 }) {
   const { api } = useSignedIn();
   const consented = useConsent(agent.id);
@@ -27,6 +28,7 @@ export function Composer({ agent, task, ready, openQuestion, waiting, startNew, 
       const sent = await sendDraft(api, { agentId: agent.id, task, waiting, ready, text, draftKey });
       if (!sent) return;
       if (task === null) onCreated(sent);
+      onSent();
       setText("");
       setDraftKey(draftId());
     } finally { sending.current = false; }
