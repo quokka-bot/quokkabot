@@ -292,6 +292,12 @@ describe("owner agent routes", () => {
     expect(picked.json().look).toEqual({ shape: "ghost", colour: "teal" });
     const renamed = await settings({ name: "Invoices" });
     expect(renamed.json()).toMatchObject({ name: "Invoices", look: { shape: "ghost", colour: "teal" } });
+    // A look alone keeps the name, model and effort; a name alone (the inline rename) keeps the look.
+    Object.assign(row, { model: "claude-sonnet-5-5", effort: "low" });
+    const lookOnly = await app.inject({ method: "PUT", url: `/api/agents/${row.id}/settings`, headers, payload: { look: { shape: "egg", colour: "pink" } } });
+    expect(lookOnly.json()).toMatchObject({ name: "Invoices", model: "claude-sonnet-5-5", effort: "low", look: { shape: "egg", colour: "pink" } });
+    const nameOnly = await app.inject({ method: "PUT", url: `/api/agents/${row.id}/settings`, headers, payload: { name: "Ledger" } });
+    expect(nameOnly.json()).toMatchObject({ name: "Ledger", model: "claude-sonnet-5-5", look: { shape: "egg", colour: "pink" } });
     expect((await settings({ look: null })).json().look).toBeNull();
     expect((await settings({ look: { shape: "drop", colour: "sky" } })).json().look).toEqual({ shape: "drop", colour: "sky" });
     await slots.remove(row.id, deps as unknown as Parameters<AgentSlots["remove"]>[1]);
