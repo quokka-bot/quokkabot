@@ -1,14 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, open, readdir, rename, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Transform } from "node:stream";
-import { type DownloadInfo, LIMITS } from "@quokkabot/shared";
+import { type DownloadInfo, type FileEntry, LIMITS } from "@quokkabot/shared";
 import type { Logger } from "pino";
 import type { AuditLog } from "./audit.js";
 import type { BrowserServiceClient, SupervisorClient } from "./clients.js";
 import { type Db, maybeOne } from "./db.js";
+import { HttpError } from "./errors.js";
 import type { TaskEvents } from "./events.js";
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -76,6 +77,35 @@ export async function uniqueName(dir: string, name: string): Promise<string> {
     if (!(await exists(join(dir, candidate)))) return candidate;
   }
   throw new Error("no free file name");
+}
+
+function listOffset(cursor: string | undefined): number {
+  if (cursor === undefined) return 0;
+  const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+  const offset = Number(decoded.slice(5));
+  if (!/^list:[1-9][0-9]*$/.test(decoded) || !Number.isSafeInteger(offset) || Buffer.from(decoded).toString("base64url") !== cursor) {
+    throw new HttpError(400, "invalid_cursor", "Invalid list cursor.");
+  }
+  return offset;
+}
+
+// The owner's list of Downloads, read from this process's own directory: every published download is here, so the
+// list works whether the agent's computer runs or not. Only this process writes the directory (the tools sandbox
+// mounts it read-only) and it holds flat files; any other entry is refused, never followed.
+export async function listDownloads(downloadsDir: string, cursor: string | undefined): Promise<{ entries: FileEntry[]; nextCursor: string | null }> {
+  const offset = listOffset(cursor);
+  const entries: FileEntry[] = [];
+  for (const name of await readdir(downloadsDir)) {
+    // Partial files before publication, and evidence copies of attached files.
+    if (name === ".incoming" || name === ".evidence") continue;
+    const stats = await lstat(join(downloadsDir, name));
+    if (!stats.isFile() || stats.nlink !== 1) throw new Error(`Downloads holds an entry that is not a published file: ${JSON.stringify(name)}`);
+    entries.push({ name, path: name, type: "file", bytes: stats.size, modifiedAt: stats.mtime.toISOString() });
+  }
+  entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+  const page = entries.slice(offset, offset + LIMITS.filesListEntries);
+  const next = offset + page.length;
+  return { entries: page, nextCursor: next < entries.length ? Buffer.from(`list:${next}`).toString("base64url") : null };
 }
 
 // Moves completed downloads out of the browser sandbox. The browser service streams the bytes; this process hashes

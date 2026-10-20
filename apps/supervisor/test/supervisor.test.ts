@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import http from "node:http";
-import { mkdtemp, mkdir, writeFile, readFile, stat, rm, unlink } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, stat, rm, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -448,6 +448,7 @@ describe("supervisor logic with in-memory Docker streams", () => {
   });
 
   it("validates helper output and spools binary exports before reporting helper errors", async () => {
+    await service.start(agent());
     const input = { op: "write" as const, path: "invoice.txt", content: "private file" };
     plans.push({ stdout: JSON.stringify({ op: "write", bytes: 12 }) });
     expect(await service.files(agent(), input)).toEqual({ op: "write", bytes: 12 });
@@ -466,6 +467,106 @@ describe("supervisor logic with in-memory Docker streams", () => {
     const missing = { op: "error", code: "not_found", message: "File is missing" };
     plans.push({ stdout: JSON.stringify(missing), exitCode: 1 });
     expect(await service.files(agent(), { op: "read", scope: "workspace", path: "missing" })).toEqual(missing);
+  });
+
+  it.each(["missing", "created", "exited"] as const)("answers computer_stopped for file work when the tools sandbox is %s, without an exec or a start", async (state) => {
+    if (state !== "missing") {
+      await service.start(agent());
+      if (state === "exited") await service.stop(agent());
+      else containers.get("qb-tools-1")!.State = { Running: false, Status: "created", StartedAt: "0001-01-01T00:00:00Z" };
+    }
+    operations.length = 0;
+    await expect(service.files(agent(), { op: "list", scope: "workspace", dir: "" })).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(service.files(agent(), { op: "list", scope: "downloads", dir: "" })).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(service.exportFile(agent(), { scope: "workspace", path: "invoice.pdf" })).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    expect(service.docker.createExec).not.toHaveBeenCalled();
+    expect(operations.every((operation) => operation === "inspect:qb-tools-1")).toBe(true);
+    // The export spool is removed with the refusal.
+    expect((await readdir(service.runs.root)).filter((name) => name.startsWith(".export-"))).toEqual([]);
+    const router = new SupervisorServer(service);
+    await router.initialize();
+    try {
+      const response = await memoryRequest(router, "POST", `/v1/agents/${agentId}/files`, { op: "list", scope: "workspace", dir: "" });
+      expect(response.statusCode).toBe(409);
+      expect(JSON.parse(Buffer.concat(response.chunks).toString())).toEqual({ error: "computer_stopped", message: "The computer is stopped" });
+    } finally { await router.close(); }
+  });
+
+  it.each(["stop", "kill"] as const)("answers a listing and an export that a %s ends mid-way like one that came after it", async (action) => {
+    await service.start(agent());
+    plans.push({ hold: true }, { hold: true });
+    const listing = service.files(agent(), { op: "list", scope: "workspace", dir: "" });
+    const exporting = service.exportFile(agent(), { scope: "workspace", path: "invoice.pdf" });
+    await until(() => executions.size === 2);
+    // The helpers run outside the lifecycle lock: the stop or kill does not wait for them.
+    await (action === "stop" ? service.stop(agent()) : service.kill(agent()));
+    executions.get("e1")!.output("stdout", '{"op":"li');
+    for (const exec of executions.values()) exec.finish(137);
+    const expected = action === "stop" ? { status: 409, code: "computer_stopped" } : { status: 409, code: "killed" };
+    await expect(listing).rejects.toMatchObject(expected);
+    await expect(exporting).rejects.toMatchObject(expected);
+    expect((await readdir(service.runs.root)).filter((name) => name.startsWith(".export-"))).toEqual([]);
+  });
+
+  it("keeps the stop's answer when a start comes before the helper ends", async () => {
+    await service.start(agent());
+    plans.push({ hold: true });
+    const listing = service.files(agent(), { op: "list", scope: "workspace", dir: "" });
+    await until(() => executions.size === 1);
+    await service.stop(agent());
+    await service.start(agent());
+    executions.get("e1")!.finish(137);
+    await expect(listing).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+  });
+
+  it("answers killed when a kill makes the helper's exec start fail", async () => {
+    await service.start(agent());
+    let killing: Promise<unknown> = Promise.resolve();
+    vi.mocked(service.docker.startExec).mockImplementationOnce(async () => {
+      killing = service.kill(agent());
+      throw new DockerError(409, "Container qb-tools-1 is not running");
+    });
+    await expect(service.files(agent(), { op: "list", scope: "workspace", dir: "" })).rejects.toMatchObject({ status: 409, code: "killed" });
+    await killing;
+  });
+
+  it("forgets a stop that came and went while the request waited for the lifecycle lock", async () => {
+    await service.start(agent());
+    plans.push({ stdout: '{"op":"li', exitCode: 137 });
+    const stopping = service.stop(agent());
+    const starting = service.start(agent());
+    const listing = service.files(agent(), { op: "list", scope: "workspace", dir: "" });
+    await Promise.all([stopping, starting]);
+    await expect(listing).rejects.toMatchObject({ status: 502, code: "invalid_helper_output" });
+  });
+
+  it("keeps a helper failure an error while the computer runs, and when the tools sandbox dies on its own", async () => {
+    await service.start(agent());
+    plans.push({ stdout: '{"op":"li', exitCode: 137 }, { stdout: "partial", exitCode: 137 });
+    await expect(service.files(agent(), { op: "list", scope: "workspace", dir: "" })).rejects.toMatchObject({ status: 502, code: "invalid_helper_output" });
+    await expect(service.exportFile(agent(), { scope: "workspace", path: "invoice.pdf" })).rejects.toMatchObject({ status: 400, code: "export_failed" });
+    plans.push({ hold: true });
+    const listing = service.files(agent(), { op: "list", scope: "workspace", dir: "" });
+    await until(() => executions.size === 3);
+    // A crash outside the supervisor: no stop or kill was asked for.
+    Object.assign(containers.get("qb-tools-1")!.State, { Running: false, Status: "exited" });
+    executions.get("e3")!.finish(137);
+    await expect(listing).rejects.toMatchObject({ status: 502, code: "invalid_helper_output" });
+  });
+
+  it("keeps the kill latch and any other tools sandbox state ahead of file work", async () => {
+    await service.start(agent());
+    containers.get("qb-tools-1")!.State.Status = "paused";
+    await expect(service.files(agent(), { op: "list", scope: "workspace", dir: "" })).rejects.toMatchObject({ status: 502, code: "tools_unavailable" });
+    containers.get("qb-tools-1")!.State.Status = "running";
+    await service.kill(agent());
+    await expect(service.files(agent(), { op: "list", scope: "workspace", dir: "" })).rejects.toMatchObject({ status: 409, code: "killed" });
+    await expect(service.exportFile(agent(), { scope: "workspace", path: "invoice.pdf" })).rejects.toMatchObject({ status: 409, code: "killed" });
+    expect(service.docker.createExec).not.toHaveBeenCalled();
+    await service.unlatch(agent());
+    containers.get("qb-tools-1")!.Config.Labels = { ...containers.get("qb-tools-1")!.Config.Labels, "quokkabot.agent": "99999999-9999-4999-8999-999999999999" };
+    await expect(service.files(agent(), { op: "list", scope: "workspace", dir: "" })).rejects.toThrow("Container qb-tools-1 does not belong to this agent");
+    expect(service.docker.createExec).not.toHaveBeenCalled();
   });
 
   it("cancels via a fixed wrapper and waits for original exit before cleanup", async () => {

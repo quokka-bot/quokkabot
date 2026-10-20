@@ -38,6 +38,18 @@ export class UpstreamError extends Error {
   }
 }
 
+const SupervisorErrorBody = z.object({ error: z.string(), message: z.string() });
+// The supervisor's machine-readable code when it refused a request with this status, or null for any other failure.
+export function supervisorErrorCode(error: unknown, status: number): string | null {
+  if (!(error instanceof UpstreamError) || error.status !== status) return null;
+  try {
+    const parsed = SupervisorErrorBody.safeParse(JSON.parse(error.body));
+    return parsed.success ? parsed.data.error : null;
+  } catch {
+    return null;
+  }
+}
+
 interface RawResponse {
   status: number;
   headers: http.IncomingHttpHeaders;

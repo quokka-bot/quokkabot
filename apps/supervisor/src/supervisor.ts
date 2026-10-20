@@ -45,6 +45,8 @@ export class Supervisor {
   private readonly cleaning = new Set<string>();
   private readonly signIns = new Map<string, SignIn>();
   private readonly background = new Set<Promise<void>>();
+  // File helpers in flight per agent. A stop or kill records itself on each one it ends.
+  private readonly fileWorks = new Map<string, Set<{ endedBy: ApiError | null }>>();
   private closing = false;
 
   constructor(config: SupervisorConfig, options: SupervisorOptions = {}) {
@@ -166,6 +168,7 @@ export class Supervisor {
 
   async stop(agent: AgentConfig): Promise<ComputerStatus> {
     return this.exclusive(agent, async () => {
+      this.endFileWorks(agent, new ApiError(409, "computer_stopped", "The computer is stopped"));
       const errors: unknown[] = [];
       const signIn = this.signIns.get(agent.agentId);
       if (signIn) await this.stopSignIn(agent, signIn);
@@ -200,6 +203,7 @@ export class Supervisor {
     if (ongoing) return ongoing;
     // Set the in-memory fence synchronously, before any asynchronous filesystem work or queued lifecycle operation.
     this.killing.add(agent.agentId);
+    this.endFileWorks(agent, new ApiError(409, "killed", "Computer is killed; owner must release the latch"));
     const operation = this.performKill(agent);
     this.kills.set(agent.agentId, operation);
     try { return await operation; }
@@ -440,17 +444,53 @@ export class Supervisor {
     const result = await this.capture(agent, "tools", this.execBody([TOOLS_PATHS.resetTools], { AttachStdin: false }), "", 16_384);
     if (result.exitCode !== 0 && result.exitCode !== 1) throw new ApiError(502, "reset_failed", "Tools process reset failed");
   }
-  async files(agent: AgentConfig, request: FilesRequest): Promise<FilesResult> {
-    const result = await this.capture(agent, "tools", this.execBody([TOOLS_PATHS.filesHelper]), JSON.stringify(request), 2 * 1024 * 1024);
-    if (result.truncated) throw new ApiError(502, "files_failed", "File helper exceeded the response limit");
-    let parsed: FilesResult;
+  // The files helper runs in the tools sandbox. A computer that was never started (no container), was created but not
+  // started, or was stopped (exited) is a normal state with a typed 409, and so is the kill switch. Any other container
+  // state is a real failure.
+  private async requireTools(agent: AgentConfig): Promise<void> {
+    await this.requireLive(agent);
+    const state = (await this.inspect(agent, "tools"))?.State.Status ?? "missing";
+    if (state === "missing" || state === "created" || state === "exited") throw new ApiError(409, "computer_stopped", "The computer is stopped");
+    if (state !== "running") throw new ApiError(502, "tools_unavailable", `The tools sandbox is ${state}`);
+  }
+
+  // The check runs under the lifecycle lock, so a start, stop or kill cannot interleave with the exec. The helper runs
+  // outside the lock so a kill never waits for it. A helper that a stop or kill ends gets the same typed answer as a
+  // request that came after it; a helper that fails on its own, a crashed sandbox included, keeps its error.
+  private async fileWork<T>(agent: AgentConfig, cmd: string[], work: (launched: { id: string; stream: Duplex }) => Promise<T>): Promise<T> {
+    const works = this.fileWorks.get(agent.agentId) ?? new Set();
+    this.fileWorks.set(agent.agentId, works);
+    const current = { endedBy: null as ApiError | null };
+    works.add(current);
     try {
-      parsed = FilesResult.parse(JSON.parse(result.stdout));
-      if (parsed.op !== "error" && parsed.op !== request.op) throw new Error("File helper operation mismatch");
-    } catch { throw new ApiError(502, "invalid_helper_output", "File helper returned invalid JSON or schema"); }
-    // Typed helper errors belong to the file protocol even when the helper also signals failure through its exit.
-    if (result.exitCode !== 0 && parsed.op !== "error") throw new ApiError(502, "files_failed", "File helper exited unsuccessfully");
-    return parsed;
+      const launched = await this.exclusive(agent, async () => {
+        // A stop or kill that came before this point is answered by the check below, never by the helper's failure.
+        current.endedBy = null;
+        await this.requireTools(agent);
+        return this.launch(agent, "tools", this.execBody(cmd));
+      }).catch((error: unknown) => { throw current.endedBy ?? error; });
+      try { return await work(launched); }
+      catch (error) { throw current.endedBy ?? error; }
+    } finally { works.delete(current); }
+  }
+  private endFileWorks(agent: AgentConfig, answer: ApiError): void {
+    // The kill switch outranks a stop.
+    for (const work of this.fileWorks.get(agent.agentId) ?? []) if (work.endedBy?.code !== "killed") work.endedBy = answer;
+  }
+
+  async files(agent: AgentConfig, request: FilesRequest): Promise<FilesResult> {
+    return this.fileWork(agent, [TOOLS_PATHS.filesHelper], async (launched) => {
+      const result = await this.collect(launched.id, launched.stream, JSON.stringify(request), 2 * 1024 * 1024);
+      if (result.truncated) throw new ApiError(502, "files_failed", "File helper exceeded the response limit");
+      let parsed: FilesResult;
+      try {
+        parsed = FilesResult.parse(JSON.parse(result.stdout));
+        if (parsed.op !== "error" && parsed.op !== request.op) throw new Error("File helper operation mismatch");
+      } catch { throw new ApiError(502, "invalid_helper_output", "File helper returned invalid JSON or schema"); }
+      // Typed helper errors belong to the file protocol even when the helper also signals failure through its exit.
+      if (result.exitCode !== 0 && parsed.op !== "error") throw new ApiError(502, "files_failed", "File helper exited unsuccessfully");
+      return parsed;
+    });
   }
 
   async writeWorkspaceFile(agent: AgentConfig, path: string, data: Buffer): Promise<void> {
@@ -468,27 +508,28 @@ export class Supervisor {
     const path = join(temporary, "file");
     const dispose = () => rm(temporary, { recursive: true, force: true });
     try {
-      const launched = await this.exclusive(agent, () => this.launch(agent, "tools", this.execBody(["/opt/quokkabot/bin/qb-files", "export"])));
-      const file = await open(path, "wx", 0o600);
-      let bytes = 0;
-      let stderr = "";
-      const decoder = new StringDecoder("utf8");
-      launched.stream.end(JSON.stringify(request));
-      try {
-        for await (const chunk of dockerOutput(launched.stream)) {
-          if (chunk.stream === "stdout") {
-            bytes += chunk.data.length;
-            if (bytes > LIMITS.downloadMaxBytes) throw new ApiError(413, "export_too_large", "Export exceeded the file limit");
-            await file.writeFile(chunk.data);
-          } else if (stderr.length < 4096) stderr += decoder.write(chunk.data).slice(0, 4096 - stderr.length);
+      return await this.fileWork(agent, [TOOLS_PATHS.filesHelper, "export"], async (launched) => {
+        const file = await open(path, "wx", 0o600);
+        let bytes = 0;
+        let stderr = "";
+        const decoder = new StringDecoder("utf8");
+        launched.stream.end(JSON.stringify(request));
+        try {
+          for await (const chunk of dockerOutput(launched.stream)) {
+            if (chunk.stream === "stdout") {
+              bytes += chunk.data.length;
+              if (bytes > LIMITS.downloadMaxBytes) throw new ApiError(413, "export_too_large", "Export exceeded the file limit");
+              await file.writeFile(chunk.data);
+            } else if (stderr.length < 4096) stderr += decoder.write(chunk.data).slice(0, 4096 - stderr.length);
+          }
+        } finally { await file.close(); }
+        const state = await this.waitExec(launched.id);
+        if (state.ExitCode !== 0) {
+          const first = stderr.split(/\r?\n/)[0] || "File export failed";
+          throw new ApiError(/not[_ ]found|ENOENT/i.test(first) ? 404 : 400, "export_failed", first);
         }
-      } finally { await file.close(); }
-      const state = await this.waitExec(launched.id);
-      if (state.ExitCode !== 0) {
-        const first = stderr.split(/\r?\n/)[0] || "File export failed";
-        throw new ApiError(/not[_ ]found|ENOENT/i.test(first) ? 404 : 400, "export_failed", first);
-      }
-      return { path, dispose };
+        return { path, dispose };
+      });
     } catch (error) { await dispose(); throw error; }
   }
 

@@ -65,7 +65,9 @@ executes it. There is no eval, cookie, storage, raw DevTools, upload or clipboar
   Docker socket. Downloads are mounted read-only.
 - **Browser.** The agent never touches Chrome's DevTools port. Password and code fields are hidden in snapshots and
   refused for typing: the owner types them through the live view. Downloads land in a staging folder, the browser
-  service streams them to control, and control hashes and publishes them into Downloads.
+  service streams them to control, and control hashes and publishes them into Downloads. The owner's Library lists
+  Downloads from control's own copy of that folder, so they show while the computer is stopped; control reads the
+  workspace only through the files helper in the tools sandbox, so the workspace shows once the computer runs.
   During the owner's takeover, native password and code fields send values directly to the browser service using a
   single-use focus handle, valid for at most a minute, bound to the inspected element, document, site and owner lease.
   Insertion rechecks focus, visibility, origin and a page-side deadline; lease changes wait for its reply and deadline.

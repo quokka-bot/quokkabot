@@ -124,7 +124,7 @@ function Panel({ agent, index, onClose }: { agent: AgentSummary; index: number; 
         <Link to={`/agents/${agent.id}/settings`}><span>Agent settings</span><span className="muted">›</span></Link>
       </div>
     </div>}
-    {tab === "library" && <div className="panel-body"><Files agentId={agent.id} /></div>}
+    {tab === "library" && <div className="panel-body"><Files agentId={agent.id} computer={agent.computer.state} /></div>}
     {tab === "computer" && <div className="panel-body">
       <div className="panel-card">
         <div className="panel-line"><span>State</span><Status value={agent.computer.state} /></div>
@@ -142,7 +142,7 @@ function SectionView({ agent, section }: { agent: AgentSummary; section: Section
   switch (section) {
     case "computer": return <Computer key={agent.id} agent={agent} />;
     case "terminal": return <Terminal key={agent.id} agent={agent} />;
-    case "files": return <Files key={agent.id} agentId={agent.id} />;
+    case "files": return <Files key={agent.id} agentId={agent.id} computer={agent.computer.state} />;
     case "apps": return <ConnectedApps key={agent.id} agentId={agent.id} />;
     case "logins": return <Logins key={agent.id} agentId={agent.id} />;
     case "domains": return <Domains key={agent.id} agentId={agent.id} />;

@@ -32,6 +32,9 @@ another session. If deletion is interrupted after removing status, startup remov
 Exports are spooled under the encrypted data root before sending HTTP headers, then streamed with backpressure.
 This permits a nonzero helper exit to return 404/400 even when the helper emitted partial bytes. Temporary
 exports are removed after delivery or failure and on restart. Export size is bounded by the shared file limit.
+File operations and exports answer 409 `computer_stopped` while the tools sandbox is missing, created or exited,
+and 409 `killed` behind the kill switch, without an exec. A helper that a stop or kill ends gets the same answer;
+a helper that fails on its own keeps its error.
 CLI output lines over 8 MiB fail the recorder and latch/kill the computer. Application logs contain operation
 names, ids, error codes and command lengths; no prompts, command contents, output or terminal input.
 
