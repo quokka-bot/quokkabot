@@ -56,6 +56,7 @@ const updated = new Date(`${PRIVACY_UPDATED}T00:00:00Z`).toLocaleDateString("en-
       <li>Saved logins: a name, the sites and the username. Passwords and 2FA secrets are encrypted with AES-256-GCM; the key is kept outside the database.</li>
       <li>If Gmail is connected: the Gmail address and an encrypted refresh token.</li>
       <li>The Claude account the agent signed in with (its email and plan type) and the Claude CLI's own sign-in file.</li>
+      <li>The owner's permission to send each agent's work to Anthropic: each time it was allowed or turned off, from which app and device, and which version of the notice the app showed.</li>
       <li>An activity log of what the agent and the owner did: pages, files, commands, downloads and the names of logins used. Text typed into messages and forms is stored there only as a hash. Each entry is chained to the one before it, so changes can be detected.</li>
       <li>Logs: requests to the server with the visitor's IP address, and every host an agent's computer connected to.</li>
     </ul>
@@ -64,7 +65,7 @@ const updated = new Date(`${PRIVACY_UPDATED}T00:00:00Z`).toLocaleDateString("en-
     <h3>How long it is kept</h3>
     <ul>
       <li>Until the owner deletes it. Deleting a login or disconnecting Gmail removes it at once; disconnecting Gmail also revokes the access at Google.</li>
-      <li>Removing an agent deletes its tasks, files, browser profile, logins and Gmail connection. The activity log stays, so the record of what happened is complete.</li>
+      <li>Removing an agent deletes its tasks, files, browser profile, logins, Gmail connection and permission records for Anthropic. The activity log stays, so the record of what happened is complete.</li>
       <li>Request and connection logs are kept up to a fixed size, then the oldest lines are dropped.</li>
       <li>If backups are on, snapshots are kept for up to 12 months, so deleted data can remain in them until they expire.</li>
     </ul>
@@ -72,7 +73,10 @@ const updated = new Date(`${PRIVACY_UPDATED}T00:00:00Z`).toLocaleDateString("en-
     <h3>Who the server sends data to</h3>
     <ul>
       <li>
-        <strong>Anthropic</strong>, for every task. The agent runs Claude Code signed in with the owner's Claude plan.
+        <strong>Anthropic</strong>, for every task while the owner allows it. The agent runs Claude Code signed in with
+        the owner's Claude plan. The owner can turn sending off for each agent in any of the apps: the agent's queued
+        and running tasks stop, and nothing more is sent until the owner allows it again. A server can also require the
+        owner's permission before the first task; on a server the owner installed, sending is on until they turn it off.
         Anthropic receives what the agent works with: the owner's messages and images, page text and screenshots,
         files it reads, command output, email it reads, and the names, usernames and sites of saved logins (never
         passwords or 2FA codes). Anthropic's terms and privacy policy apply, including whether it uses this data to train
@@ -109,6 +113,7 @@ const updated = new Date(`${PRIVACY_UPDATED}T00:00:00Z`).toLocaleDateString("en-
     <ul>
       <li>It connects only to the server you sign in to and keeps the sign-in in the iOS Keychain.</li>
       <li>What you write and approve in it goes to that server, which handles it as described above, Anthropic included.</li>
+      <li>Before it sends anything to an agent, it names the AI provider and asks your permission. Your answer is stored on the server, and every app you use with that server follows it.</li>
       <li>It has no analytics, advertising or tracking of its own.</li>
       <li>Apple delivers the app through the App Store under Apple's privacy policy. If you allow it in iOS Settings, Apple shares crash reports and usage statistics with us.</li>
     </ul>

@@ -234,7 +234,7 @@ async function httpFixture() {
   const fixtureData = await fixture();
   const { slots, db, audit } = fixtureData;
   const computer = { releaseKill: vi.fn(async () => undefined), view: vi.fn(async () => ({ state: "stopped", sandboxes: [], lease: { holder: "paused", generation: 1, expiresAt: null }, attendedOpen: false, killedAt: null })) };
-  const { app } = await buildServer({ config, slots, db, audit, computer, vault: { list: vi.fn() }, auth: { session: async () => ({ hash: "owner", freshUntil: new Date(Date.now() + 10000) }) },
+  const { app } = await buildServer({ config, slots, db, audit, computer, consents: { view: async () => ({ provider: "anthropic", disclosureVersion: "test", state: "not_asked", required: false, allowed: true, changedAt: null, changedBy: null }) }, vault: { list: vi.fn() }, auth: { session: async () => ({ hash: "owner", freshUntil: new Date(Date.now() + 10000) }) },
     log: pino({ level: "silent" }), webRoot: "/missing" } as unknown as HttpDeps);
   servers.push(app);
   const headers = { host: config.appHost, origin: config.appOrigin };
@@ -339,7 +339,7 @@ describe("removal cancellation", () => {
     const cancelRun = vi.fn(async () => undefined);
     const events = { append: vi.fn(async () => undefined) };
     const tasks = new TaskService(db, events as never, {} as never, { cancelRun, cleanupRun, run: async () => ({ state: "cancelled" }) } as never,
-      {} as never, {} as never, pino({ level: "silent" }), () => [ids[0]!]);
+      {} as never, {} as never, pino({ level: "silent" }), () => [ids[0]!], { view: async () => ({ state: "granted", allowed: true }) } as never);
     vi.spyOn(tasks, "watch").mockImplementation(() => undefined);
     await tasks.cancelAgent(ids[0]!);
     expect(cancelRun).toHaveBeenCalledWith("run");

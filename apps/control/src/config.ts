@@ -52,6 +52,10 @@ export const ControlConfigFile = z
     desktopRoot: z.string().startsWith("/").optional(),
     defaultModel: z.string().default("claude-opus-5-5"),
     defaultEffort: z.enum(["low", "medium", "high", "xhigh", "max"]).default("xhigh"),
+    // Whether a task needs a recorded permission to send to the agent's AI provider before it runs. On for the hosted
+    // cloud, where the operator passes the owner's data to the provider. Off on a self-hosted server: the owner who
+    // installed it chose the provider; any app can still withdraw the permission, and a withdrawal always stops sends.
+    aiConsentRequired: z.boolean().default(false),
   })
   .strict().superRefine((config, context) => {
     for (const key of ["agentId", "index", "mcpUrl"] as const) {

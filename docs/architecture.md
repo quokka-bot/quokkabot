@@ -84,6 +84,13 @@ executes it. There is no eval, cookie, storage, raw DevTools, upload or clipboar
 - **Kill switch.** One request freezes the agent's egress, stops all three sandboxes and revokes its tokens; it works
   without the database or the job queue on the headerless emergency path. Web requests carrying an occupant generation
   first take the slot lock and check the database. Nothing restarts until the owner confirms with a passkey.
+- **AI consent.** The owner's permission to send an agent's work to its AI provider is a server record, shared by the
+  web, Mac and iPhone apps: each allow or withdrawal is a new row naming the owner, the agent occupant (generation),
+  the app and device, and the notice version the app showed. Dispatch checks it in the transaction that starts a run,
+  holding the agent row; a withdrawal takes that row exclusively, then fences and cancels the agent's runs (revoking
+  their tool tokens) and ends its queued tasks before its reply returns. `aiConsentRequired` in control.json decides
+  what no record means: off (self-hosted, the default) sends until the owner withdraws; on (the hosted cloud) sends
+  nothing until the owner allows it.
 - **Audit.** Every owner action, tool call, browser command, download, domain decision, takeover and terminal session is
   appended to a per-agent hash chain. Typed text is stored as a keyed hash.
 

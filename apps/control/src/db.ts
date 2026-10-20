@@ -571,6 +571,29 @@ const MIGRATIONS: Migration[] = [
       update domain_requests set reported = true where decided_at is not null;
     `,
   },
+  {
+    id: 20,
+    sql: (appUser) => `
+      -- The owner's decisions about sending an agent's work to its AI provider, append-only: each allow or withdraw is
+      -- a new row and the latest one (highest id) decides. A row counts only for the owner, the agent occupant
+      -- (generation) and, for an allow, the disclosure it was made under. Rows go with the agent when it is removed.
+      create table ai_consents (
+        id bigint generated always as identity primary key,
+        agent_id uuid not null references agents(id),
+        agent_generation int not null,
+        owner_id text not null,
+        provider text not null check (provider in ('anthropic')),
+        granted boolean not null,
+        disclosure_version text,
+        decided_at timestamptz not null default now(),
+        client text not null check (client in ('browser', 'desktop', 'phone')),
+        device_name text not null,
+        check (granted = (disclosure_version is not null))
+      );
+      create index ai_consents_agent on ai_consents (agent_id, provider, id desc);
+      grant select, insert, delete on ai_consents to ${appUser};
+    `,
+  },
 ];
 
 export async function migrate(config: ControlConfig): Promise<void> {

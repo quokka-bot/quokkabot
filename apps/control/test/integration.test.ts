@@ -8,7 +8,7 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256Hex } from "@quokkabot/shared/node";
-import { REACTION_EMOJIS, type TaskEvent, type TaskEventEnvelope } from "@quokkabot/shared";
+import { AI_PROVIDERS, REACTION_EMOJIS, type TaskEvent, type TaskEventEnvelope } from "@quokkabot/shared";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import pg from "pg";
@@ -282,6 +282,7 @@ describe.skipIf(!enabled)("control plane end to end", () => {
       }],
       defaultModel: "claude-opus-5-5",
       defaultEffort: "xhigh",
+      aiConsentRequired: false,
       secrets: {
         dbOwnerPassword: ownerPassword, dbAppPassword: secret(), sessionSecret: (killSecret = Buffer.from(secret())), auditHmacKey: Buffer.from(secret()),
         vaultKey: randomBytes(32), googleClient, supervisorToken, egressToken, perAgent: new Map([AGENT, AGENT2].map(id => [id, { selkiesMasterToken: selkiesMaster, browserServiceToken: browserToken }])),
@@ -295,6 +296,8 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     await db.query("insert into sessions (hash, expires_at, fresh_until) values ($1, now() + interval '1 day', now() + interval '5 minutes')", [sha256Hex(sessionToken)]);
     passkey = new SoftPasskey("localhost", `http://localhost:${appPort}`);
     await passkey.register(db);
+    // The owner, as setup records it with the first passkey.
+    await db.query("insert into owner_account (id, name, webauthn_user_id) values (1, 'Owner', $1) on conflict do nothing", [randomBytes(32).toString("base64url")]);
   }, 120_000);
 
   afterAll(async () => {
@@ -1620,6 +1623,134 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     await new Promise<void>((resolve, reject) => { socket.once("open", () => resolve()); socket.once("error", reject); });
     return socket;
   }
+
+  // --- The owner's permission to send to the AI provider ------------------------------------------------------------
+
+  const DISCLOSURE = AI_PROVIDERS.anthropic.disclosureVersion;
+  async function taskWhen(taskId: string, state: string): Promise<any> {
+    return waitFor(async () => {
+      const detail = await api("GET", `/api/tasks/${taskId}`);
+      return detail.body.task.state === state ? detail.body.task : undefined;
+    }, `task ${state}`);
+  }
+  // A task as an app queued it before the server knew of any withdrawal: straight into the queue, past the HTTP check.
+  async function queuedTask(agentId: string, prompt: string): Promise<string> {
+    const id = randomUUID();
+    await db.query(
+      `insert into tasks (id, agent_id, title, prompt, state, model, effort, session_id, pending_prompt)
+       values ($1, $2, $3, $3, 'queued', 'claude-opus-5-5', 'xhigh', $4, $3)`, [id, agentId, prompt, randomUUID()]);
+    control.tasks.kick();
+    return id;
+  }
+
+  it("refuses to dispatch without the owner's consent on a server that requires it", async () => {
+    controlConfig.aiConsentRequired = true;
+    try {
+      const agent = (await api("GET", `/api/agents/${AGENT}`)).body;
+      expect(agent.aiConsent).toMatchObject({ provider: "anthropic", disclosureVersion: DISCLOSURE, state: "not_asked", required: true, allowed: false });
+      const refused = await api("POST", `/api/agents/${AGENT}/tasks`, { prompt: "Pay the electricity bill." });
+      expect(refused.status).toBe(403);
+      expect(refused.body.error).toEqual({ code: "ai_consent_required", message: "Allow sending to Anthropic for this agent first." });
+
+      // A task already in the queue never reaches the model either: dispatch ends it without starting a run.
+      const before = runs.size;
+      const queued = await queuedTask(AGENT, "Queued before the server required consent.");
+      const ended = await taskWhen(queued, "cancelled");
+      expect(ended.error).toBe("Not sent: allow sending to Anthropic for this agent, then send it again.");
+      expect(runs.size).toBe(before);
+
+      // Allowing names the disclosure and the agent occupant the app showed it for.
+      const stale = await api("PUT", `/api/agents/${AGENT}/ai-consent`, { allow: true, provider: "anthropic", disclosureVersion: "2000-01-01", generation: agent.generation });
+      expect(stale.body.error.code).toBe("disclosure_changed");
+      const replaced = await api("PUT", `/api/agents/${AGENT}/ai-consent`, { allow: true, provider: "anthropic", disclosureVersion: DISCLOSURE, generation: agent.generation + 1 });
+      expect(replaced.body.error.code).toBe("agent_replaced");
+      expect((await api("GET", `/api/agents/${AGENT}/ai-consent`)).body).toMatchObject({ state: "not_asked", allowed: false });
+
+      const allowed = await api("PUT", `/api/agents/${AGENT}/ai-consent`, { allow: true, provider: "anthropic", disclosureVersion: DISCLOSURE, generation: agent.generation });
+      expect(allowed.body).toMatchObject({ state: "granted", allowed: true, changedBy: { client: "browser", deviceName: "Browser" } });
+      const created = await api("POST", `/api/agents/${AGENT}/tasks`, { prompt: "Pay the electricity bill." });
+      expect(created.status).toBe(200);
+      const run = await waitFor(() => [...runs.values()][before], "run after consent");
+      await finishRun(run, "Paid.");
+      await taskWhen(created.body.id, "completed");
+
+      const owner = (await db.query("select webauthn_user_id from owner_account")).rows[0].webauthn_user_id;
+      const records = (await db.query("select owner_id, agent_generation, granted, disclosure_version, client from ai_consents where agent_id = $1 order by id", [AGENT])).rows;
+      expect(records).toEqual([{ owner_id: owner, agent_generation: agent.generation, granted: true, disclosure_version: DISCLOSURE, client: "browser" }]);
+      const audit = (await api("GET", `/api/agents/${AGENT}/audit`)).body.events.find((e: { type: string }) => e.type === "ai_consent.granted");
+      expect(audit.data).toEqual({ provider: "anthropic", disclosureVersion: DISCLOSURE, client: "browser", deviceName: "Browser" });
+    } finally {
+      controlConfig.aiConsentRequired = false;
+    }
+  }, 30_000);
+
+  it("stops queued and running tasks when the phone withdraws consent, before anything more reaches the model", async () => {
+    const phone = await phoneSession({ name: "Owner's iPhone" });
+    const asPhone = { cookie: false, origin: null, headers: bearer(phone.token) } as const;
+    const before = runs.size;
+    const running = await api("POST", `/api/agents/${AGENT}/tasks`, { prompt: "Compare three phone plans." });
+    const run = await waitFor(() => [...runs.values()][before], "running task's run");
+    // One run per agent: this one waits in the queue behind it.
+    const queued = await api("POST", `/api/agents/${AGENT}/tasks`, { prompt: "Then cancel the old plan." });
+    expect(queued.status).toBe(200);
+
+    const withdrawn = await api("PUT", `/api/agents/${AGENT}/ai-consent`, { allow: false, provider: "anthropic" }, asPhone);
+    expect(withdrawn.body).toMatchObject({ state: "withdrawn", allowed: false, changedBy: { client: "phone", deviceName: "Owner's iPhone" } });
+    // By the time the reply returns, the running CLI is cancelled, its tool token is dead and the queued task ended.
+    expect(run.state).toBe("cancelled");
+    const cli = await fetch(`http://127.0.0.1:${mcpPort}/mcp`, { method: "POST", headers: { authorization: `Bearer ${String(run.request.mcpToken)}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+    expect(cli.status).toBe(401);
+    const stopped = "Stopped: sending to Anthropic is off for this agent.";
+    expect((await api("GET", `/api/tasks/${queued.body.id}`)).body.task).toMatchObject({ state: "cancelled", error: stopped });
+    expect((await taskWhen(running.body.id, "cancelled")).error).toBe(stopped);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(runs.size).toBe(before + 1);
+
+    // The phone's withdrawal holds for every app: the browser cannot send either, and nothing slips into the queue.
+    const refused = await api("POST", `/api/agents/${AGENT}/tasks`, { prompt: "Try anyway." });
+    expect(refused.status).toBe(403);
+    expect(refused.body.error).toEqual({ code: "ai_consent_required", message: "Sending to Anthropic is off for this agent. Turn it on to send." });
+    expect((await api("POST", `/api/tasks/${running.body.id}/message`, { text: "Go on." }, asPhone)).body.error.code).toBe("ai_consent_required");
+    const late = await queuedTask(AGENT, "Queued by an app that missed the withdrawal.");
+    expect((await taskWhen(late, "cancelled")).error).toBe(stopped);
+    expect(runs.size).toBe(before + 1);
+    const types = (await api("GET", `/api/agents/${AGENT}/audit`)).body.events.map((e: { type: string }) => e.type);
+    expect(types).toContain("ai_consent.withdrawn");
+
+    // Allowing again from the browser lets new work run.
+    const generation = (await api("GET", `/api/agents/${AGENT}`)).body.generation;
+    expect((await api("PUT", `/api/agents/${AGENT}/ai-consent`, { allow: true, provider: "anthropic", disclosureVersion: DISCLOSURE, generation })).body).toMatchObject({ state: "granted", allowed: true });
+    const again = await api("POST", `/api/agents/${AGENT}/tasks`, { prompt: "Compare three phone plans." });
+    await finishRun(await waitFor(() => [...runs.values()][before + 1], "run after allowing again"), "Compared.");
+    await taskWhen(again.body.id, "completed");
+  }, 30_000);
+
+  it("never lets one consent cover another agent, an earlier agent in the same slot or another owner", async () => {
+    controlConfig.aiConsentRequired = true;
+    try {
+      expect((await api("GET", `/api/agents/${AGENT}/ai-consent`)).body).toMatchObject({ state: "granted", allowed: true });
+      const second = await api("POST", "/api/agents", { name: "Second" });
+      expect(second.body).toMatchObject({ id: AGENT2, aiConsent: { state: "not_asked", allowed: false } });
+      expect((await api("POST", `/api/agents/${AGENT2}/tasks`, { prompt: "x" })).body.error.code).toBe("ai_consent_required");
+
+      // Records that name another owner, or the agent that had this slot before, do not count.
+      await db.query(
+        `insert into ai_consents (agent_id, agent_generation, owner_id, provider, granted, disclosure_version, client, device_name)
+         values ($1, $2, 'another-owner', 'anthropic', true, $3, 'phone', 'Their iPhone'),
+                ($1, $2 - 1, (select webauthn_user_id from owner_account), 'anthropic', true, $3, 'phone', 'Owner''s iPhone')`,
+        [AGENT2, second.body.generation, DISCLOSURE]);
+      expect((await api("GET", `/api/agents/${AGENT2}/ai-consent`)).body).toMatchObject({ state: "not_asked", allowed: false });
+      const queued = await queuedTask(AGENT2, "Should never run.");
+      expect((await taskWhen(queued, "cancelled")).error).toBe("Not sent: allow sending to Anthropic for this agent, then send it again.");
+      expect(supervisorCalls).not.toContain(`POST /v1/agents/${AGENT2}/runs`);
+
+      // Removing the agent removes its records.
+      expect((await api("DELETE", `/api/agents/${AGENT2}`)).status).toBe(200);
+      expect((await db.query("select count(*)::int as n from ai_consents where agent_id = $1", [AGENT2])).rows[0].n).toBe(0);
+    } finally {
+      controlConfig.aiConsentRequired = false;
+    }
+  }, 30_000);
 
   it("keeps the audit log append-only for the application role", async () => {
     await expect(db.query("update audit_events set data = '{}' where seq = 1")).rejects.toThrow(/permission denied/);

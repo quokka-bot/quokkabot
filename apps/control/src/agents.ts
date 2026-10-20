@@ -127,7 +127,7 @@ export class AgentSlots {
     await deps.connectors.removeAgent(id);
     deps.policy.forgetAgent(id);
     await withTx(this.db, async (tx) => {
-      for (const table of ["connect_states", "connectors", "logins", "domain_requests", "domain_rules", "blocked_hosts", "files", "browser_commands", "view_tickets", "view_sessions", "attachments"]) {
+      for (const table of ["ai_consents", "connect_states", "connectors", "logins", "domain_requests", "domain_rules", "blocked_hosts", "files", "browser_commands", "view_tickets", "view_sessions", "attachments"]) {
         await tx.query(`delete from ${table} where agent_id = $1`, [id]);
       }
       await tx.query("delete from tasks where agent_id = $1", [id]);

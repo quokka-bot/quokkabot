@@ -23,7 +23,7 @@ export const OPERATOR = {
 } as const;
 
 // Date of the current privacy policy. The full history is the git log of src/pages/privacy.astro.
-export const PRIVACY_UPDATED = "2026-10-19";
+export const PRIVACY_UPDATED = "2026-10-20";
 
 // Pages build to /privacy.html (build.format "file") and are served at /privacy; the home page is /.
 export function publicPath(pathname: string): string {

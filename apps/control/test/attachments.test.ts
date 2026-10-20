@@ -152,13 +152,14 @@ function workflow(attachmentRows: AttachmentRow[]) {
     if (sql.startsWith("insert into runs")) { const run = { id: values[0], task_id: taskId, agent_id: agentId, attempt: 2, state: "starting", prompt: values[4], resume: values[5], attachment_ids: values[7], started_at: new Date(), ended_at: null, last_event_at: null, exit_code: null } as RunRow; runRows.push(run); return { rows: [run] }; }
     if (sql.startsWith("update tasks set state = 'running'")) { task = { ...task, pending_prompt: null, pending_attachment_ids: [] }; return { rows: [] }; }
     if (sql.startsWith("update runs") || sql.startsWith("update tasks set session_started")) return { rows: [] };
+    if (sql.startsWith("select fence_reason from runs")) return { rows: [{ fence_reason: null }] };
     throw new Error(`Unexpected SQL: ${sql}`);
   });
   const db = { query, connect: async () => ({ query, release: () => undefined }) } as unknown as Db;
   const supervisor = { resetTools: vi.fn(), writeWorkspaceFile: vi.fn(), startRun: vi.fn() };
   const service = new TaskService(db, { append: async (_tx: unknown, _id: string, event: unknown) => { events.push(event); } } as never,
     { append: vi.fn(), textDigest: vi.fn() } as never, supervisor as never, { isRunning: async () => true, setLease: vi.fn() } as never,
-    { push: vi.fn().mockResolvedValue(undefined) } as never, pino({ level: "silent" }), () => [agentId]);
+    { push: vi.fn().mockResolvedValue(undefined) } as never, pino({ level: "silent" }), () => [agentId], { require: async () => undefined, view: async () => ({ state: "granted", allowed: true }) } as never);
   vi.spyOn(service, "kick").mockImplementation(() => undefined);
   Object.defineProperty(service, "watch", { value: vi.fn() });
   return { service, supervisor, runRows, query, task: () => task, request: () => request, events: () => events };

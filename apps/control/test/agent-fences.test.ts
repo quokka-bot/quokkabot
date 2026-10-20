@@ -31,6 +31,7 @@ async function fixture() {
       throw new Error(`Unexpected SQL: ${sql}`);
     } },
     auth: { session: async () => ({ hash: "owner" }) },
+    consents: { view: async () => ({ provider: "anthropic", disclosureVersion: "test", state: "not_asked", required: false, allowed: true, changedAt: null, changedBy: null }) },
     tasks: { create }, audit: { append: vi.fn(), textDigest: () => ({ hmac: "digest", length: 8 }) },
     computer: { view: async () => ({ state: "stopped", sandboxes: [], lease: { holder: "paused", generation: 1, expiresAt: null }, attendedOpen: false, killedAt: null }) },
     log: pino({ level: "silent" }), webRoot: "/missing",
