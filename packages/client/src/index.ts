@@ -1,5 +1,6 @@
 export * from "./agents.js";
 export * from "./chat.js";
+export * from "./chat-scroll.js";
 export * from "./task-stream.js";
 export * from "./sse.js";
 export * from "./requests.js";

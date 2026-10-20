@@ -145,7 +145,7 @@ export function OwnerImages({ attachments }: { attachments: readonly Attachment[
   return <>
     <div className={`owner-images ${attachments.length === 1 ? "single" : "grid"}`}>{attachments.map(attachment =>
       <button type="button" key={attachment.id} aria-label={`View ${attachment.name}`} onClick={event => { trigger.current = event.currentTarget; setSelected(attachment); }}>
-        <img src={attachmentContentUrl(attachment.id)} alt={attachment.name} loading="lazy" />
+        <img src={attachmentContentUrl(attachment.id)} alt={attachment.name} width={attachment.width} height={attachment.height} loading="lazy" />
       </button>)}</div>
     {selected && <div ref={dialog} className="image-viewer" role="dialog" aria-modal="true" aria-label={selected.name} tabIndex={-1} onClick={close}>
       <button type="button" aria-label="Close image" onClick={close}>×</button>

@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
@@ -48,6 +48,8 @@ async function openChat(path = `/agents/${agentId}`) {
   await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
   const source = MockEventSource.instances[0];
   if (!source) throw new Error("Task EventSource was not opened");
+  // The stream opens as soon as the task is known, before its detail has loaded: wait for the task in the chat.
+  await screen.findByRole("textbox", { name: "Message" });
   return source;
 }
 
@@ -162,6 +164,217 @@ describe("task stream", () => {
     });
     expect(screen.getByText("The supervisor lost the process")).toBeTruthy();
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === `/api/tasks/${taskId}`)).toBe(true));
+  });
+});
+
+describe("chat scrolling", () => {
+  // jsdom has no layout: each test sets the scroller's heights, clamps its position like a browser, and reports a size
+  // change by hand.
+  let resized: (() => void)[] = [];
+  const resize = () => act(() => resized.forEach(callback => callback()));
+  beforeEach(() => {
+    resized = [];
+    vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { resized.push(callback); } observe() {} disconnect() {} });
+  });
+  function chatScroller(size: { content: number; viewport: number }) {
+    const scroller = document.querySelector<HTMLElement>(".chat-scroll");
+    const column = scroller?.querySelector(".chat-column");
+    if (!scroller || !column) throw new Error("The chat scroller is not rendered");
+    let top = 0;
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => size.content });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => size.viewport });
+    Object.defineProperty(scroller, "scrollTop", { configurable: true, get: () => top, set: (value: number) => { top = Math.max(0, Math.min(value, size.content - size.viewport)); } });
+    return { scroller, opening: () => column.classList.contains("opening") };
+  }
+  const say = (text: string): TaskEvent => ({ kind: "assistant_text", text });
+
+  it("opens hidden and shows at the latest message once the stream reaches the task's last event", async () => {
+    handler = path => path === `/api/tasks/${taskId}` ? json({ ...detail, lastSeq: 3 }) : undefined;
+    const source = await openChat();
+    const { scroller, opening } = chatScroller({ content: 2000, viewport: 500 });
+    expect(opening()).toBe(true);
+    expect(screen.getByText("Loading…")).toBeTruthy();
+    act(() => { source.emit(1, { kind: "owner_message", text: "Compare the invoices", attachments: [] }); source.emit(2, say("Comparing them now.")); });
+    expect(opening()).toBe(true);
+    expect(scroller.scrollTop).toBe(0);
+    act(() => source.emit(3, say("Three totals changed.")));
+    await waitFor(() => expect(opening()).toBe(false));
+    expect(scroller.scrollTop).toBe(1500);
+    expect(screen.queryByText("Loading…")).toBeNull();
+  });
+
+  it("keeps the end in view while the owner is there and leaves an owner reading older messages where they are", async () => {
+    const source = await openChat();
+    const size = { content: 2000, viewport: 500 };
+    const { scroller, opening } = chatScroller(size);
+    await waitFor(() => expect(opening()).toBe(false));
+    scroller.scrollTop = 1500;
+    fireEvent.scroll(scroller);
+    size.content = 2600;
+    act(() => source.emit(1, say("First batch compared.")));
+    resize();
+    expect(scroller.scrollTop).toBe(2100);
+    // The scroll event of that move is read only after the next message has arrived: the view still follows.
+    size.content = 2900;
+    act(() => source.emit(2, say("Second batch started.")));
+    fireEvent.scroll(scroller);
+    resize();
+    expect(scroller.scrollTop).toBe(2400);
+    // The owner scrolls up to read: new content leaves the view where it is.
+    scroller.scrollTop = 800;
+    fireEvent.scroll(scroller);
+    size.content = 3200;
+    act(() => source.emit(3, say("Second batch compared.")));
+    resize();
+    expect(scroller.scrollTop).toBe(800);
+    // Back near the end, the view follows again.
+    scroller.scrollTop = 3200 - 500 - 20;
+    fireEvent.scroll(scroller);
+    size.content = 3600;
+    resize();
+    expect(scroller.scrollTop).toBe(3100);
+  });
+
+  it("stops following when the owner scrolls up in the same moment as the chat's own scroll to the end", async () => {
+    const source = await openChat();
+    const size = { content: 2000, viewport: 500 };
+    const { scroller, opening } = chatScroller(size);
+    await waitFor(() => expect(opening()).toBe(false));
+    scroller.scrollTop = 1500;
+    fireEvent.scroll(scroller);
+    size.content = 2400;
+    act(() => source.emit(1, say("First batch compared.")));
+    resize();
+    expect(scroller.scrollTop).toBe(1900);
+    // The browser delivers one scroll event for the chat's move to 1900 and the owner's scroll up to 1800.
+    scroller.scrollTop = 1800;
+    fireEvent.scroll(scroller);
+    size.content = 2800;
+    act(() => source.emit(2, say("Second batch compared.")));
+    resize();
+    expect(scroller.scrollTop).toBe(1800);
+  });
+
+  it("brings an owner reading older messages to the end when they send a message", async () => {
+    handler = path => {
+      if (path === `/api/tasks/${taskId}`) return json({ ...detail, task: { ...task, state: "completed" } });
+      if (path === `/api/tasks/${taskId}/message`) return json(task);
+      return undefined;
+    };
+    await openChat();
+    const size = { content: 2000, viewport: 500 };
+    const { scroller, opening } = chatScroller(size);
+    await waitFor(() => expect(opening()).toBe(false));
+    scroller.scrollTop = 300;
+    fireEvent.scroll(scroller);
+    fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Compare the next batch" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(scroller.scrollTop).toBe(1500));
+    size.content = 2400;
+    resize();
+    expect(scroller.scrollTop).toBe(1900);
+  });
+
+  it("leaves another task where the owner reads it when a send from the first task finishes late", async () => {
+    const older = { ...task, id: domainRequestId, title: "Collect September invoices", state: "completed", result: { summary: "September saved", files: [] } };
+    let accept!: () => void;
+    handler = path => {
+      if (path === `/api/agents/${agentId}/tasks?`) return json({ tasks: [{ ...task, state: "completed" }, older], nextBefore: null });
+      if (path === `/api/tasks/${taskId}`) return json({ ...detail, task: { ...task, state: "completed" } });
+      if (path === `/api/tasks/${older.id}`) return json({ ...detail, task: older });
+      if (path === `/api/tasks/${taskId}/message`) return new Promise<Response>(resolve => { accept = () => resolve(json(task)); });
+      return undefined;
+    };
+    await openChat();
+    const size = { content: 2000, viewport: 500 };
+    const { scroller, opening } = chatScroller(size);
+    await waitFor(() => expect(opening()).toBe(false));
+    fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Compare the next batch" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(accept).toBeTypeOf("function"));
+    fireEvent.click(screen.getByRole("button", { name: "Open this task" }));
+    await waitFor(() => expect(screen.getByLabelText("App route").textContent).toBe(`/agents/${agentId}?task=${older.id}`));
+    await waitFor(() => expect(opening()).toBe(false));
+    scroller.scrollTop = 700;
+    fireEvent.scroll(scroller);
+    await act(async () => { accept(); await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(scroller.scrollTop).toBe(700);
+  });
+
+  it("keeps the chat shown when the owner creates a task, while that task loads", async () => {
+    const created = { ...task, id: domainRequestId, title: "Collect October invoices" };
+    let createdOpen = false;
+    handler = (path, init) => {
+      if (path === `/api/agents/${agentId}/tasks` && init?.method === "POST") { createdOpen = true; return json(created); }
+      if (path === `/api/agents/${agentId}/tasks?`) return json({ tasks: createdOpen ? [created, task] : [task], nextBefore: null });
+      if (path === `/api/tasks/${created.id}`) return new Promise<Response>(() => undefined);
+      return undefined;
+    };
+    renderApp(`/agents/${agentId}?new=1`);
+    const composer = await screen.findByRole("textbox", { name: "New task" });
+    const { opening } = chatScroller({ content: 800, viewport: 500 });
+    await waitFor(() => expect(opening()).toBe(false));
+    const column = document.querySelector(".chat-column");
+    if (!column) throw new Error("The chat column is not rendered");
+    const hidden: string[] = [];
+    const watch = new MutationObserver(() => { if (column.classList.contains("opening")) hidden.push(screen.getByLabelText("App route").textContent ?? ""); });
+    watch.observe(column, { attributes: true, attributeFilter: ["class"] });
+    fireEvent.change(composer, { target: { value: "Collect October invoices" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.getByLabelText("App route").textContent).toBe(`/agents/${agentId}?task=${created.id}`));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+    watch.disconnect();
+    expect(hidden).toEqual([]);
+    expect(opening()).toBe(false);
+  });
+
+  it("opens the chat again at the end when a task started elsewhere becomes the latest", async () => {
+    const newer = { ...task, id: domainRequestId, title: "Collect October invoices" };
+    let started = false;
+    handler = path => {
+      if (path === `/api/agents/${agentId}/tasks?`) return json({ tasks: started ? [newer, task] : [task], nextBefore: null });
+      if (path === `/api/tasks/${newer.id}`) return json({ ...detail, task: newer, lastSeq: 1 });
+      return undefined;
+    };
+    await openChat();
+    const { scroller, opening } = chatScroller({ content: 2000, viewport: 500 });
+    await waitFor(() => expect(opening()).toBe(false));
+    scroller.scrollTop = 300;
+    fireEvent.scroll(scroller);
+    started = true;
+    act(() => { focusManager.setFocused(false); focusManager.setFocused(true); });
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(2));
+    expect(opening()).toBe(true);
+    const latest = MockEventSource.instances[1];
+    if (!latest) throw new Error("The new task's stream did not open");
+    act(() => latest.emit(1, { kind: "owner_message", text: "Collect October invoices", attachments: [] }));
+    await waitFor(() => expect(opening()).toBe(false));
+    expect(scroller.scrollTop).toBe(1500);
+  });
+
+  it("opens a task hidden again when the owner returns to it before another task finished loading", async () => {
+    const older = { ...task, id: domainRequestId, title: "Collect September invoices", state: "completed", result: { summary: "September saved", files: [] } };
+    handler = path => {
+      if (path === `/api/agents/${agentId}/tasks?`) return json({ tasks: [task, older], nextBefore: null });
+      if (path === `/api/tasks/${taskId}`) return json({ ...detail, lastSeq: 2 });
+      if (path === `/api/tasks/${older.id}`) return new Promise<Response>(() => undefined);
+      return undefined;
+    };
+    const first = await openChat();
+    const { opening } = chatScroller({ content: 2000, viewport: 500 });
+    act(() => { first.emit(1, { kind: "owner_message", text: "Collect the invoices", attachments: [] }); first.emit(2, say("Collecting them.")); });
+    await waitFor(() => expect(opening()).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Open this task" }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(2));
+    expect(opening()).toBe(true);
+    fireEvent.click(screen.getByRole("link", { name: "Back to the latest task" }));
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(3));
+    // The latest task's history loads again from its first event: the chat stays hidden until it is all there.
+    expect(opening()).toBe(true);
+    const again = MockEventSource.instances[2];
+    if (!again) throw new Error("The latest task's stream did not open again");
+    act(() => { again.emit(1, { kind: "owner_message", text: "Collect the invoices", attachments: [] }); again.emit(2, say("Collecting them.")); });
+    await waitFor(() => expect(opening()).toBe(false));
   });
 });
 
