@@ -288,7 +288,8 @@ describe.skipIf(!enabled)("control plane end to end", () => {
       },
     };
     controlConfig = config;
-    control = await startControl(config, pino({ level: "warn" }), mkdtempSync(join(tmpdir(), "qb-web-")));
+    // Site requests wait 6 seconds for the owner here, not 90.
+    control = await startControl(config, pino({ level: "warn" }), mkdtempSync(join(tmpdir(), "qb-web-")), 6_000);
     db = new pg.Pool({ host: "127.0.0.1", port: dbPort, user: "quokkabot_app", password: config.secrets.dbAppPassword, database: "quokkabot" });
     // Sign the owner in directly; passkey ceremonies are covered elsewhere.
     await db.query("insert into sessions (hash, expires_at, fresh_until) values ($1, now() + interval '1 day', now() + interval '5 minutes')", [sha256Hex(sessionToken)]);
@@ -1207,6 +1208,106 @@ describe.skipIf(!enabled)("control plane end to end", () => {
       expect((await api("POST", `/api/domain-requests/${open[1]}/decide`, { decision: "allow_task", attended: false })).status).toBe(200);
       await waitFor(() => runs.size > before + 1 ? true : undefined, "run resumed after the last decision");
     } finally {
+      await api("POST", `/api/tasks/${taskId}/cancel`, {});
+    }
+  }, 60_000);
+
+  it("keeps one open site request per task and resumes the agent on a decision that comes after the wait", async () => {
+    const before = runs.size;
+    const created = await api("POST", `/api/agents/${AGENT}/tasks`, { prompt: "Read the example docs." });
+    expect(created.status).toBe(200);
+    const taskId = created.body.id as string;
+    const run = await waitFor(() => [...runs.values()][before], "site wait run");
+    const cli = await mcpClient(String(run.request.mcpToken));
+    const requests = async () => (await db.query<{ id: string; domains: string[]; decision: string | null }>(
+      "select id, domains, decision from domain_requests where task_id = $1 order by created_at", [taskId])).rows;
+    const cards = async () => (await db.query<{ event: TaskEvent }>(
+      "select event from task_events where task_id = $1 and event->>'kind' = 'domain_request' order by seq", [taskId])).rows.map(row => row.event);
+    try {
+      // The agent asks for the same site twice, once by host and once by site, before the owner decides. The second
+      // call also names a new site, which alone gets a new card.
+      const first = cli.callTool({ name: "request_domains", arguments: { domains: ["docs.example.com"], reason: "Read the docs" } });
+      await waitFor(async () => (await requests()).length === 1 ? true : undefined, "first site request");
+      await new Promise((r) => setTimeout(r, 3_000));
+      const second = cli.callTool({ name: "request_domains", arguments: { domains: ["example.com", "cdn.example.net"], reason: "Read the docs again" } });
+      await waitFor(async () => (await requests()).length === 2 ? true : undefined, "second site request");
+      expect(textOf(await first)).toContain("The owner has not decided yet. End your turn now; you continue when they decide.");
+      expect(await requests()).toEqual([
+        expect.objectContaining({ domains: ["*.example.com"], decision: null }),
+        expect.objectContaining({ domains: ["*.example.net"], decision: null }),
+      ]);
+      expect((await cards()).map(card => (card as { domains: string[] }).domains)).toEqual([["*.example.com"], ["*.example.net"]]);
+      const runRow = (await db.query<{ fence_reason: string | null }>("select fence_reason from runs where id = $1", [run.runId])).rows[0];
+      expect(runRow?.fence_reason).toBe("domain_request");
+      expect((await db.query<{ blocked_reason: string | null }>("select blocked_reason from tasks where id = $1", [taskId])).rows[0]?.blocked_reason).toBe("domain_request");
+      // The parked run cannot ask again; the cards stay as they are.
+      expect(textOf(await cli.callTool({ name: "request_domains", arguments: { domains: ["example.com"], reason: "Once more" } }))).toContain("You are waiting for the owner.");
+      expect(await cards()).toHaveLength(2);
+
+      // The owner decides both while the second call still waits and the run is ending its turn: the second call is
+      // told to end its turn, and the decisions wait as the next prompt.
+      const [open, cdn] = await requests();
+      expect((await api("POST", `/api/domain-requests/${open?.id}/decide`, { decision: "allow_task", attended: false })).status).toBe(200);
+      expect((await api("POST", `/api/domain-requests/${cdn?.id}/decide`, { decision: "refuse", attended: false })).status).toBe(200);
+      expect(textOf(await second)).toContain("You are waiting for the owner. End your turn now; you continue when they decide.");
+      const prompt = "Allowed: example.com, each with all its subdomains. The owner refused example.net. Find another way or tell the owner what you cannot do. Continue.";
+      expect((await db.query<{ pending_prompt: string | null }>("select pending_prompt from tasks where id = $1", [taskId])).rows[0]?.pending_prompt).toBe(prompt);
+      await finishRun(run, "Waiting for example.com.");
+      const resumed = await waitFor(() => [...runs.values()][before + 1], "run resumed on the late decision");
+      expect(String(resumed.request.prompt)).toContain(prompt);
+      expect((await db.query<{ reported: boolean }>("select reported from domain_requests where id = $1", [open?.id])).rows[0]?.reported).toBe(true);
+      expect((await db.query<{ state: string }>("select state from tasks where id = $1", [taskId])).rows[0]?.state).toBe("running");
+    } finally {
+      await cli.close();
+      await api("POST", `/api/tasks/${taskId}/cancel`, {});
+    }
+  }, 60_000);
+
+  it("asks again after a decision and never reuses another task's or another agent's site request", async () => {
+    const before = runs.size;
+    const created = await api("POST", `/api/agents/${AGENT}/tasks`, { prompt: "Open the shop." });
+    expect(created.status).toBe(200);
+    const taskId = created.body.id as string;
+    const run = await waitFor(() => [...runs.values()][before], "reuse boundary run");
+    const cli = await mcpClient(String(run.request.mcpToken));
+    const earlierTask = randomUUID();
+    const openFor = async (where: string, values: unknown[]) =>
+      (await db.query<{ id: string }>(`select id from domain_requests where decided_at is null and ${where} order by created_at`, values)).rows;
+    try {
+      // Open requests for the same site from another task of this agent and from another agent (even naming this task).
+      await db.query("insert into tasks (id, agent_id, title, prompt, state, model, effort, session_id) values ($1, $2, 'Earlier task', 'Earlier prompt', 'completed', 'claude-opus-5-5', 'xhigh', $3)", [earlierTask, AGENT, randomUUID()]);
+      const otherTask = randomUUID();
+      const otherAgent = randomUUID();
+      await db.query("insert into domain_requests (id, agent_id, task_id, domains, reason) values ($1, $2, $3, '{*.shop.example}', 'Other task')", [otherTask, AGENT, earlierTask]);
+      await db.query("insert into domain_requests (id, agent_id, task_id, domains, reason) values ($1, $2, $3, '{*.shop.example}', 'Other agent')", [otherAgent, AGENT2, taskId]);
+
+      const refused = cli.callTool({ name: "request_domains", arguments: { domains: ["www.shop.example"], reason: "Open the shop" } });
+      const first = await waitFor(async () => (await openFor("agent_id = $1 and task_id = $2", [AGENT, taskId]))[0], "this task's own site request");
+      expect([otherTask, otherAgent]).not.toContain(first.id);
+      expect((await api("POST", `/api/domain-requests/${first.id}/decide`, { decision: "refuse", attended: false })).status).toBe(200);
+      expect(textOf(await refused)).toContain("The owner refused shop.example. Find another way or tell the owner what you cannot do.");
+
+      // A refused request is not reused: asking again opens a new card.
+      const again = cli.callTool({ name: "request_domains", arguments: { domains: ["shop.example"], reason: "Try the shop again" } });
+      const second = await waitFor(async () => (await openFor("agent_id = $1 and task_id = $2", [AGENT, taskId]))[0], "a new site request after the refusal");
+      expect(second.id).not.toBe(first.id);
+      expect((await api("POST", `/api/domain-requests/${second.id}/decide`, { decision: "allow_task", attended: true })).status).toBe(200);
+      expect(textOf(await again)).toContain("Allowed only during an attended session: shop.example, each with all its subdomains. Reload the page.");
+
+      // An allowed request is not reused either.
+      const third = cli.callTool({ name: "request_domains", arguments: { domains: ["shop.example"], reason: "And once more" } });
+      const newest = await waitFor(async () => (await openFor("agent_id = $1 and task_id = $2", [AGENT, taskId]))[0], "a new site request after the allow");
+      expect([first.id, second.id]).not.toContain(newest.id);
+      expect((await api("POST", `/api/domain-requests/${newest.id}/decide`, { decision: "allow_task", attended: false })).status).toBe(200);
+      expect(textOf(await third)).toContain("Allowed: shop.example");
+
+      const cards = (await db.query<{ event: { requestId: string } }>("select event from task_events where task_id = $1 and event->>'kind' = 'domain_request' order by seq", [taskId])).rows;
+      expect(cards.map(row => row.event.requestId)).toEqual([first.id, second.id, newest.id]);
+      expect((await openFor("id = any($1::uuid[])", [[otherTask, otherAgent]])).map(row => row.id).sort()).toEqual([otherTask, otherAgent].sort());
+    } finally {
+      await cli.close();
+      await db.query("delete from domain_requests where reason in ('Other task', 'Other agent')");
+      await db.query("delete from tasks where id = $1", [earlierTask]);
       await api("POST", `/api/tasks/${taskId}/cancel`, {});
     }
   }, 60_000);

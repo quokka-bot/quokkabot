@@ -23,7 +23,7 @@ import { z } from "zod";
 import type { AuditLog } from "./audit.js";
 import type { SupervisorClient } from "./clients.js";
 import type { AgentHandles, ComputerService } from "./computer.js";
-import { type Db, maybeOne, one } from "./db.js";
+import { type Db, many, maybeOne, one, withTx } from "./db.js";
 import { type EvidenceStore, mimeFor } from "./files.js";
 import type { Vault } from "./vault.js";
 import type { Connectors } from "./connectors.js";
@@ -32,9 +32,7 @@ import { HttpError } from "./errors.js";
 const SIGN_IN_WORDS = /\b(log ?in|logging in|sign ?in|signing in|password|credentials?|username)\b/i;
 import type { TaskEvents } from "./events.js";
 import type { PolicyService } from "./policy.js";
-import { type TaskRow, type TaskService, ownerRequestView } from "./tasks.js";
-
-const DOMAIN_WAIT_MS = 90_000;
+import { type TaskRow, type TaskService, ownerRequestView, siteDecisionText } from "./tasks.js";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 interface ToolOutcome {
@@ -69,6 +67,7 @@ export class McpEndpoint {
     private readonly connectors: Connectors,
     private readonly log: Logger,
     private readonly mcpUrl: (agentId: string) => string | null,
+    private readonly siteWaitMs = 90_000,
   ) {}
 
   // Plain node:http listener bound to the CLI network address only. Every request needs the run's bearer token.
@@ -587,33 +586,70 @@ export class McpEndpoint {
       return { status: "invalid", text: `${error instanceof Error ? error.message : String(error)}. Ask for the site itself, such as example.com.` };
     }
     const sites = domains.map(siteLabel).join(", ");
-    const id = randomUUID();
-    await this.db.query(
-      "insert into domain_requests (id, agent_id, task_id, run_id, domains, reason) values ($1, $2, $3, $4, $5, $6)",
-      [id, ctx.agentId, ctx.task.id, ctx.runId, domains, input.reason],
-    );
-    await this.audit.append(ctx.agentId, "agent", "domain.requested", { requestId: id, domains, reason: this.audit.textDigest(input.reason) });
-    await this.events.append(this.db, ctx.task.id, { kind: "tool_call", tool: "request_domains", summary: `Asked to open ${sites}: ${input.reason}` });
-    await this.events.append(this.db, ctx.task.id, { kind: "domain_request", requestId: id as DomainRequestId, domains, reason: input.reason });
-    const deadline = Date.now() + DOMAIN_WAIT_MS;
-    while (Date.now() < deadline) {
-      const row = await one<{ decision: string | null; attended: boolean }>(this.db, "select decision, attended from domain_requests where id = $1", [id]);
-      if (row.decision === "refuse") return { status: "blocked", text: `The owner refused ${sites}. Find another way or tell the owner what you cannot do.` };
-      if (row.decision === "skip") {
+    // One card per site per task: a site already in this task's open request is waited on, not asked again. Decided
+    // requests, other tasks and other agents never count.
+    const asked = await withTx(this.db, async (tx) => {
+      // Serializes two calls of the same task, so both cannot insert the same site.
+      await tx.query("select 1 from tasks where id = $1 for update", [ctx.task.id]);
+      // Another call of this run may have parked it since callNow looked: a request made now would never resume it.
+      const run = await one<{ fenced_at: Date | null }>(tx, "select fenced_at from runs where id = $1", [ctx.runId]);
+      if (run.fenced_at) return null;
+      const open = await many<{ id: string; domains: string[] }>(
+        tx,
+        "select id, domains from domain_requests where agent_id = $1 and task_id = $2 and decided_at is null order by created_at",
+        [ctx.agentId, ctx.task.id],
+      );
+      const openSites = new Set(open.flatMap((row) => row.domains));
+      const missing = domains.filter((pattern) => !openSites.has(pattern));
+      const waitIds = open.filter((row) => row.domains.some((pattern) => domains.includes(pattern))).map((row) => row.id);
+      if (missing.length === 0) return { created: null, waitIds };
+      const id = randomUUID();
+      await tx.query(
+        "insert into domain_requests (id, agent_id, task_id, run_id, domains, reason) values ($1, $2, $3, $4, $5, $6)",
+        [id, ctx.agentId, ctx.task.id, ctx.runId, missing, input.reason],
+      );
+      await this.events.append(tx, ctx.task.id, { kind: "tool_call", tool: "request_domains", summary: `Asked to open ${missing.map(siteLabel).join(", ")}: ${input.reason}` });
+      await this.events.append(tx, ctx.task.id, { kind: "domain_request", requestId: id as DomainRequestId, domains: missing, reason: input.reason });
+      return { created: { id, domains: missing }, waitIds: [...waitIds, id] };
+    });
+    if (!asked) return { status: "blocked", text: "You are waiting for the owner. End your turn now; you continue when they decide." };
+    const { created, waitIds } = asked;
+    if (created) {
+      await this.audit.append(ctx.agentId, "agent", "domain.requested", { requestId: created.id, domains: created.domains, reason: this.audit.textDigest(input.reason) });
+    }
+    // Each look happens under the task's row lock, as domainDecided does, so a decision is reported once: here while
+    // the run works, or in the prompt that resumes the task once the run is parked.
+    const look = (deadlinePassed: boolean) => withTx(this.db, async (tx): Promise<ToolOutcome | null> => {
+      await tx.query("select 1 from tasks where id = $1 for update", [ctx.task.id]);
+      const rows = await many<{ id: string; domains: string[]; decision: string | null; attended: boolean }>(
+        tx,
+        "select id, domains, decision, attended from domain_requests where id = any($1::uuid[])",
+        [waitIds],
+      );
+      if (rows.some((row) => row.decision === "skip")) {
         return { status: "blocked", text: `The owner wrote you a message instead of allowing ${sites}. End your turn now; their message starts your next turn.` };
       }
-      if (row.decision) {
-        return {
-          status: "ok",
-          text: `Allowed${row.attended ? " (only during an attended session)" : ""}: ${sites}, each with all its subdomains. Reload the page.`,
-        };
+      // Another call of this run already parked it: the decisions reach the agent in the next prompt.
+      const run = await one<{ fenced_at: Date | null }>(tx, "select fenced_at from runs where id = $1", [ctx.runId]);
+      if (run.fenced_at) return { status: "blocked", text: "You are waiting for the owner. End your turn now; you continue when they decide." };
+      if (rows.every((row) => row.decision !== null)) {
+        await tx.query("update domain_requests set reported = true where id = any($1::uuid[])", [waitIds]);
+        const allowed = rows.some((row) => row.decision !== "refuse");
+        return { status: allowed ? "ok" : "blocked", text: `${siteDecisionText(rows)}${allowed ? " Reload the page." : ""}` };
       }
+      if (!deadlinePassed) return null;
+      // The request stays open: the run ends its turn and the owner's decision starts the next one, whenever it comes.
+      await tx.query("update runs set fenced_at = coalesce(fenced_at, now()), fence_reason = coalesce(fence_reason, 'domain_request') where id = $1", [ctx.runId]);
+      const parked = await tx.query("update tasks set blocked_reason = 'domain_request', updated_at = now() where id = $1 and blocked_reason is null", [ctx.task.id]);
+      if (parked.rowCount === 1) await this.events.append(tx, ctx.task.id, { kind: "state", state: "running", blockedReason: "domain_request" });
+      return { status: "blocked", text: "The owner has not decided yet. End your turn now; you continue when they decide." };
+    });
+    const deadline = Date.now() + this.siteWaitMs;
+    for (;;) {
+      const outcome = await look(Date.now() >= deadline);
+      if (outcome) return outcome;
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
-    return {
-      status: "blocked",
-      text: "The owner has not decided yet. Do other work that does not need these sites, or end your turn; you continue when they decide.",
-    };
   }
 
   private async askOwner(ctx: CallContext, question: string): Promise<ToolOutcome> {

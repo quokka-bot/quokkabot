@@ -37,7 +37,6 @@ import {
   TakeoverRequest,
   TakeoverFillRequest,
   TerminalClientFrame,
-  siteLabel,
 } from "@quokkabot/shared";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
@@ -1164,12 +1163,7 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
     }
     await audit.append(row.agent_id, "owner", "domain.decided", { requestId, decision: body.decision, attended: body.attended, domains: row.domains });
     if (row.task_id) await events.append(db, row.task_id, { kind: "domain_decided", requestId: requestId as DomainRequestId, decision: body.decision, attended: body.attended });
-    await tasks.domainDecided(
-      row.task_id,
-      body.decision === "refuse"
-        ? `The owner refused access to ${row.domains.map(siteLabel).join(", ")}.`
-        : `The owner allowed ${row.domains.map(siteLabel).join(", ")}${body.attended ? " (only while they attend)" : ""}. Continue.`,
-    );
+    await tasks.domainDecided(row.task_id);
     return domainsView(row.agent_id);
   });
 

@@ -255,7 +255,9 @@ export const MCP_TOOLS = {
     description:
       "Ask the owner to let the browser reach more sites. Name sites, not hosts: each entry covers the site and all its " +
       "subdomains (auth.roblox.com and www.roblox.com are both roblox.com). Include the other sites a blocked result " +
-      "shows the page needs, such as its CDN or captcha. Waits up to 90 seconds for the decision.",
+      "shows the page needs, such as its CDN or captcha. Waits up to 90 seconds for the decision; if the owner has not " +
+      "decided by then, end your turn and their decision starts your next one. Asking again for a site this task already " +
+      "asked for waits on the same request.",
     input: z
       .object({
         domains: z.array(DomainPattern).min(1).max(LIMITS.domainsPerRequest),

@@ -866,18 +866,31 @@ export class TaskService {
     ]);
   }
 
-  // Domain decision: if the task was parked waiting for it, it continues.
-  async domainDecided(taskId: string | null, message: string): Promise<void> {
+  // Site decisions resume a task parked on its site requests once none is open. The run that asked may still be
+  // ending its turn after the wait (fenced): the decisions then wait as its next prompt. Every decision the agent has
+  // not been told goes into that prompt.
+  async domainDecided(taskId: string | null): Promise<void> {
     if (!taskId) return;
-    const task = await maybeOne<TaskRow>(this.db, "select * from tasks where id = $1", [taskId]);
-    if (!task || task.state !== "running" || task.blocked_reason !== "domain_request") return;
-    const active = await maybeOne(this.db, "select 1 from runs where task_id = $1 and state in ('starting','running') limit 1", [taskId]);
-    if (active) return;
-    const stillOpen = await maybeOne(this.db, "select 1 from domain_requests where task_id = $1 and decided_at is null limit 1", [taskId]);
-    if (stillOpen) return;
-    await this.db.query("update tasks set pending_prompt = $2, blocked_reason = null, updated_at = now() where id = $1", [taskId, message]);
-    await this.events.append(this.db, taskId, { kind: "state", state: "running", blockedReason: null });
-    this.kick();
+    const resumed = await withTx(this.db, async (tx) => {
+      const task = await maybeOne<TaskRow>(tx, "select * from tasks where id = $1 for update", [taskId]);
+      if (!task || task.state !== "running" || task.blocked_reason !== "domain_request") return false;
+      const working = await maybeOne(tx, "select 1 from runs where task_id = $1 and state in ('starting','running') and fenced_at is null limit 1", [taskId]);
+      if (working) return false;
+      const stillOpen = await maybeOne(tx, "select 1 from domain_requests where task_id = $1 and decided_at is null limit 1", [taskId]);
+      if (stillOpen) return false;
+      const decided = await many<{ domains: string[]; decision: string; attended: boolean }>(
+        tx,
+        `update domain_requests set reported = true where task_id = $1 and not reported and decision in ('allow_task', 'allow_always', 'refuse')
+         returning domains, decision, attended`,
+        [taskId],
+      );
+      if (decided.length === 0) throw new Error(`task ${taskId} is parked on site requests, but none has an unreported decision`);
+      const allowed = decided.some((row) => row.decision !== "refuse");
+      await tx.query("update tasks set pending_prompt = $2, blocked_reason = null, updated_at = now() where id = $1", [taskId, `${siteDecisionText(decided)}${allowed ? " Continue." : ""}`]);
+      await this.events.append(tx, taskId, { kind: "state", state: "running", blockedReason: null });
+      return true;
+    });
+    if (resumed) this.kick();
   }
 
   // --- Startup -------------------------------------------------------------------------------------------------------
@@ -902,4 +915,18 @@ function sleep(ms: number): Promise<void> {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300);
+}
+
+// What the owner decided on site requests, in the words the agent gets.
+export function siteDecisionText(rows: { domains: string[]; decision: string | null; attended: boolean }[]): string {
+  const sites = (pick: (row: { decision: string | null; attended: boolean }) => boolean) =>
+    rows.filter(pick).flatMap((row) => row.domains.map(siteLabel)).join(", ");
+  const allowed = sites((row) => row.decision !== "refuse" && !row.attended);
+  const attended = sites((row) => row.decision !== "refuse" && row.attended);
+  const refused = sites((row) => row.decision === "refuse");
+  return [
+    allowed && `Allowed: ${allowed}, each with all its subdomains.`,
+    attended && `Allowed only during an attended session: ${attended}, each with all its subdomains.`,
+    refused && `The owner refused ${refused}. Find another way or tell the owner what you cannot do.`,
+  ].filter(Boolean).join(" ");
 }
