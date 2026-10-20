@@ -290,7 +290,7 @@ describe("settings and native navigation", () => {
     await waitFor(() => expect((screen.getByRole("checkbox", { name: "Notifications" }) as HTMLInputElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("checkbox", { name: "Show details in notifications" }));
     await waitFor(() => expect(desktop.setSettings).toHaveBeenCalledWith({ notificationDetails: false }));
-    fireEvent.click(screen.getByRole("button", { name: "Show downloads folder" })); fireEvent.click(screen.getByRole("button", { name: "Change server" })); fireEvent.click(screen.getByRole("button", { name: "Restart to update" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show downloads folder" })); fireEvent.click(screen.getByRole("button", { name: "Change server" })); fireEvent.click(within(screen.getByRole("region", { name: "Desktop settings" })).getByRole("button", { name: "Restart to update" }));
     await waitFor(() => { expect(desktop.showDownloads).toHaveBeenCalledOnce(); expect(desktop.changeServer).toHaveBeenCalledOnce(); expect(desktop.installUpdate).toHaveBeenCalledOnce(); });
     expect(screen.getByText("App version: 1.2.3")).toBeTruthy(); expect(screen.getByText("Update status: ready (1.2.4)")).toBeTruthy();
   });
@@ -302,6 +302,46 @@ describe("settings and native navigation", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("Login item could not be changed");
     expect(screen.queryByRole("button", { name: "Restart to update" })).toBeNull();
     expect((screen.getByRole("checkbox", { name: "Launch at login" }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("shows a downloaded app update in the sidebar and restarts into it", async () => {
+    const desktop = bridge(); mount();
+    const notice = await screen.findByRole("status", { name: "App update" });
+    const restart = await within(notice).findByRole("button", { name: "Restart to update" });
+    expect(notice.textContent).toContain("Quokka Bot 1.2.4 is ready.");
+    fireEvent.click(restart);
+    await waitFor(() => expect(desktop.installUpdate).toHaveBeenCalledOnce());
+  });
+
+  it("shows the restart error in the sidebar notice", async () => {
+    const desktop = bridge(); desktop.installUpdate.mockRejectedValue(new Error("No downloaded update is ready to install."));
+    mount();
+    fireEvent.click(await within(await screen.findByRole("status", { name: "App update" })).findByRole("button", { name: "Restart to update" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("No downloaded update is ready to install.");
+  });
+
+  it.each(["idle", "checking", "available", "downloading", "error", "unsupported"] as const)("shows no sidebar update notice while %s", async state => {
+    const desktop = bridge(); desktop.getUpdateStatus.mockResolvedValue({ state, version: null, message: null });
+    mount(); await screen.findByRole("navigation", { name: "Agents" });
+    await waitFor(() => expect(desktop.getUpdateStatus).toHaveBeenCalled());
+    expect(screen.getByRole("status", { name: "App update" }).textContent).toBe("");
+  });
+
+  it("keeps the status region mounted and fills it when the update is ready", async () => {
+    const desktop = bridge(); desktop.getUpdateStatus.mockResolvedValue({ state: "downloading", version: "1.2.4", message: null });
+    mount(); await waitFor(() => expect(desktop.getUpdateStatus).toHaveBeenCalled());
+    const region = screen.getByRole("status", { name: "App update" });
+    expect(region.textContent).toBe("");
+    desktop.getUpdateStatus.mockResolvedValue({ state: "ready", version: "1.2.4", message: null });
+    await act(async () => { await clients[0]?.refetchQueries({ queryKey: ["desktop-update"] }); });
+    await waitFor(() => expect(region.textContent).toContain("Quokka Bot 1.2.4 is ready."));
+    expect(screen.getByRole("status", { name: "App update" })).toBe(region);
+  });
+
+  it("shows no app update notice in a browser", async () => {
+    mount(); await screen.findByRole("navigation", { name: "Agents" });
+    expect(screen.queryByRole("status", { name: "App update" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Restart to update" })).toBeNull();
   });
 
   it("routes onNavigate, focuses the new-task box and unsubscribes", async () => {

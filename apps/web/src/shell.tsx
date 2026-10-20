@@ -6,6 +6,7 @@ import { api } from "./api.js";
 import { Audit } from "./audit.js";
 import { AgentAvatar } from "./avatar.js";
 import { ConnectedApps, GmailIcon } from "./apps.js";
+import { DesktopUpdateNotice } from "./desktop-update.js";
 import { AgentChat } from "./chat.js";
 import { ClaudeSignInCard, claudeAccount } from "./claude-sign-in.js";
 import { Computer, Terminal } from "./computer.js";
@@ -53,6 +54,7 @@ function Sidebar() {
     </nav>
     <button type="button" className="new-agent" aria-label="New agent" disabled={!agents.data} onClick={() => setAdding(true)}>+ New agent</button>
     {adding && agents.data && <NewAgentDialog data={agents.data} onClose={() => setAdding(false)} />}
+    <DesktopUpdateNotice />
     <div className="sidebar-bottom">
       <NavLink to="/settings" className="owner-avatar" aria-label="Settings" title="Settings">{(me.data?.ownerName ?? "?").slice(0, 1).toUpperCase()}</NavLink>
       {appsFor ? <NavLink to={`/agents/${appsFor}/apps`} className="pill">Connect apps <GmailIcon /></NavLink> : <NavLink to="/settings" className="pill">Settings</NavLink>}
