@@ -242,7 +242,8 @@ export function AgentChat({ agent, index }: { agent: AgentSummary; index: number
   const detail = useQuery({ queryKey: ["task", selectedId], queryFn: () => api.task(selectedId as string), enabled: selectedId !== null, refetchInterval: interval });
   const current = selectedId === null ? null : detail.data?.task ?? null;
   const position = selectedId === null ? 0 : list.findIndex(task => task.id === selectedId);
-  const earlier = (position >= 0 ? list.slice(position + 1) : []).slice(0, 6).reverse();
+  // A new task keeps the latest tasks above it; an open task shows the ones before it.
+  const earlier = (selectedId === null ? list : position >= 0 ? list.slice(position + 1) : []).slice(0, 6).reverse();
   const inbox = useQuery({ queryKey: ["inbox"], queryFn: api.inbox, refetchInterval: interval });
   const openRequests = detail.data?.openRequests.filter(request => request.answeredAt === null) ?? [];
   const openSites = inbox.data?.items.some(item => item.kind === "domain_request" && item.request.taskId === selectedId) ?? false;

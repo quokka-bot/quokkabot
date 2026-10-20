@@ -557,6 +557,17 @@ it("shows earlier tasks as exchanges and opens their full chat", async () => {
   expect(screen.getByLabelText("App route").textContent).toBe(`/agents/${agentId}?task=${older.id}`);
 });
 
+it("keeps the latest task above a new task, with the older ones before it", async () => {
+  const older = { ...task, id: domainRequestId, title: "Collect September invoices", state: "completed", result: { summary: "September saved", files: [] } };
+  handler = path => path === `/api/agents/${agentId}/tasks?` ? json({ tasks: [task, older], nextBefore: null }) : undefined;
+  renderApp(`/agents/${agentId}?new=1`);
+  await screen.findByText("New task", { selector: "p" });
+  const exchanges = [...document.querySelectorAll(".chat .earlier")].map(exchange => exchange.querySelector(".bubble.owner")?.textContent);
+  expect(exchanges).toEqual([older.title, task.title]);
+  expect(screen.getAllByRole("button", { name: "Open this task" })).toHaveLength(2);
+  expect(MockEventSource.instances).toHaveLength(0);
+});
+
 it("keeps one answer per run and folds the agent's lines between tools into the steps", async () => {
   const source = await openChat();
   act(() => {
