@@ -98,7 +98,7 @@ export function ClaudeSetting() {
     </>}
     {signIn.data && !signIn.data.signedIn && <p>Sign in to Claude from any agent's chat. Every agent then uses that sign-in.</p>}
     {confirming && <Dialog title="Sign out of Claude?" onClose={() => { if (!signOut.isPending) setConfirming(false); }}>
-      <p>Agents stop using this sign-in. An agent signed in from its own terminal keeps working; the others need a new sign-in. A task that is working now keeps going until it stops or asks you something.</p>
+      <p>This removes the sign-in all agents share. Agents signed in from their own terminal keep working. The others need a new sign-in. A running task keeps going until it stops or asks you something.</p>
       <ErrorLine error={signOut.error} />
       <div className="actions"><button type="button" className="danger" disabled={signOut.isPending} onClick={() => signOut.mutate()}>Sign out</button>
         <button type="button" disabled={signOut.isPending} onClick={() => setConfirming(false)}>Cancel</button></div>

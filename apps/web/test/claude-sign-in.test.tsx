@@ -110,7 +110,7 @@ describe("Claude setting", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign out of Claude" }));
     expect(api.signOutClaude).not.toHaveBeenCalled();
     // An agent's own terminal sign-in is not part of this sign-out.
-    expect(screen.getByText(/An agent signed in from its own terminal keeps working; the others need a new sign-in\./)).not.toBeNull();
+    expect(screen.getByText(/Agents signed in from their own terminal keep working\. The others need a new sign-in\./)).not.toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
     expect(await screen.findByText("Sign in to Claude from any agent's chat. Every agent then uses that sign-in.")).not.toBeNull();
     expect(api.signOutClaude).toHaveBeenCalledOnce();

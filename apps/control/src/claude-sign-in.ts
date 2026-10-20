@@ -17,7 +17,16 @@ export function sharedSignIn(db: Db): Promise<SharedSignInRow | null> {
 
 export class ClaudeSignIns {
   private readonly sessions = new Map<string, { agentId: string; generation: number; expiresAt: number }>();
+  // Finishing a sign-in and signing out each change the supervisor's token and then the row. One at a time, so the row
+  // always says whether a token is stored.
+  private shared: Promise<unknown> = Promise.resolve();
   constructor(private readonly db: Db, private readonly supervisor: SupervisorClient, private readonly computer: ComputerService, private readonly audit: AuditLog, private readonly slots: AgentSlots) {}
+
+  private serial<T>(action: () => Promise<T>): Promise<T> {
+    const current = this.shared.catch(() => undefined).then(action);
+    this.shared = current;
+    return current;
+  }
 
   dropAgent(agentId: string): void {
     for (const [id, session] of this.sessions) if (session.agentId === agentId) this.sessions.delete(id);
@@ -66,16 +75,18 @@ export class ClaudeSignIns {
         throw new HttpError(404, "unknown_sign_in", "Sign-in expired or ended. Start again.");
       }
       await this.slots.require(session.agentId, false, session.generation);
-      const view = await this.call(() => this.supervisor.submitSignIn(signInId, parsed.data.code), parsed.data.code);
-      if (!view.signedIn || view.signedInAt === null) throw new HttpError(502, "claude_sign_in_failed", "Claude sign-in did not finish. Start again.");
-      this.sessions.delete(signInId);
-      // Sign-ins from two agents can finish in either order here. The supervisor keeps the token it saved last, which
-      // has the later time, so the row keeps the later one too.
-      await this.db.query(
-        `insert into claude_sign_in (id, signed_in_at) values ($1, $2) on conflict (singleton)
-         do update set id = excluded.id, signed_in_at = excluded.signed_in_at where claude_sign_in.signed_in_at <= excluded.signed_in_at`,
-        [signInId, view.signedInAt],
-      );
+      const view = await this.serial(async () => {
+        const saved = await this.call(() => this.supervisor.submitSignIn(signInId, parsed.data.code), parsed.data.code);
+        if (!saved.signedIn || saved.signedInAt === null) throw new HttpError(502, "claude_sign_in_failed", "Claude sign-in did not finish. Start again.");
+        this.sessions.delete(signInId);
+        // The supervisor keeps the token it saved last, which has the later time; the row keeps the later one too.
+        await this.db.query(
+          `insert into claude_sign_in (id, signed_in_at) values ($1, $2) on conflict (singleton)
+           do update set id = excluded.id, signed_in_at = excluded.signed_in_at where claude_sign_in.signed_in_at <= excluded.signed_in_at`,
+          [signInId, saved.signedInAt],
+        );
+        return saved;
+      });
       for (const agentId of await this.slots.ids()) await this.audit.append(agentId, "owner", "claude.signed_in", { allAgents: true, from: session.agentId });
       return view;
     });
@@ -88,8 +99,10 @@ export class ClaudeSignIns {
 
   // Removes the stored token whichever sign-in made it. Runs already going keep theirs until they end.
   async signOut(): Promise<void> {
-    await this.call(() => this.supervisor.signOutClaude());
-    await this.db.query("delete from claude_sign_in", []);
+    await this.serial(async () => {
+      await this.call(() => this.supervisor.signOutClaude());
+      await this.db.query("delete from claude_sign_in", []);
+    });
     for (const agentId of await this.slots.ids()) await this.audit.append(agentId, "owner", "claude.signed_out", { allAgents: true });
   }
 

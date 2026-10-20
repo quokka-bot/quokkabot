@@ -99,6 +99,22 @@ describe("owner Claude sign-in routes", () => {
     expect(audit).toHaveBeenCalledWith(agentId, "owner", "claude.signed_out", { allAgents: true });
   });
 
+  it("signs out only after a sign-in that is finishing, so the record never outlives or misses the token", async () => {
+    await start();
+    let finish!: (value: typeof view) => void;
+    submit.mockImplementationOnce(() => new Promise<typeof view>((resolve) => { finish = resolve; }));
+    const signingIn = app.inject({ method: "POST", url: codePath, headers, payload: { code } }).then(result => result);
+    await vi.waitFor(() => expect(submit).toHaveBeenCalled());
+    const signingOut = app.inject({ method: "DELETE", url: "/api/claude-sign-in", headers }).then(result => result);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(signOutClaude).not.toHaveBeenCalled();
+    finish(view);
+    expect((await signingIn).statusCode).toBe(200);
+    expect((await signingOut).json()).toEqual({ signedIn: false, signedInAt: null });
+    expect(signOutClaude).toHaveBeenCalledOnce();
+    expect(shared).toBeNull();
+  });
+
   it("keeps the record when the supervisor cannot remove the token", async () => {
     shared = { id: signInId, signed_in_at: new Date(view.signedInAt) };
     signOutClaude.mockRejectedValue(new Error("supervisor down"));
