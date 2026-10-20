@@ -77,10 +77,16 @@ describe("fitting the computer's screen to the owner's phone", () => {
   it("maps a lease the browser refused to no_takeover and other failures to a fixed error", async () => {
     setScreen.mockRejectedValue(new UpstreamError("PUT /v1/screen", 409, "{\"message\":\"no takeover\"}"));
     expect((await put()).json().error.code).toBe("no_takeover");
-    setScreen.mockRejectedValue(new Error("screen resize failed"));
-    const response = await put();
-    expect(response.statusCode).toBe(502);
-    expect(response.json()).toEqual({ error: { code: "screen_failed", message: "Could not fit the screen to this phone. Refresh the view." } });
+    for (const failure of [
+      new Error("screen resize failed"),
+      new UpstreamError("PUT /v1/screen", 409, "{\"message\":\"browser service operation refused\"}"),
+      new UpstreamError("PUT /v1/screen", 409, "not json"),
+    ]) {
+      setScreen.mockRejectedValue(failure);
+      const response = await put();
+      expect(response.statusCode).toBe(502);
+      expect(response.json()).toEqual({ error: { code: "screen_failed", message: "Could not fit the screen to this phone. Refresh the view." } });
+    }
     expect(audit).not.toHaveBeenCalled();
   });
 });

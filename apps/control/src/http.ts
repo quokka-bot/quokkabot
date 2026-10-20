@@ -763,7 +763,12 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
     let size;
     try { size = await handles(agentId).browser.setScreen({ ...body, leaseGeneration: lease.generation }); }
     catch (error) {
-      if (error instanceof UpstreamError && error.status === 409) throw new HttpError(409, "no_takeover", "Take over the computer first.");
+      // The browser service answers 409 for any failure; only "no takeover" means the lease was refused.
+      let refused = false;
+      if (error instanceof UpstreamError && error.status === 409) {
+        try { refused = JSON.parse(error.body).message === "no takeover"; } catch { /* An invalid reply is a failure. */ }
+      }
+      if (refused) throw new HttpError(409, "no_takeover", "Take over the computer first.");
       throw new HttpError(502, "screen_failed", "Could not fit the screen to this phone. Refresh the view.");
     }
     await audit.append(agentId, "owner", "takeover.screen", { width: size.width, height: size.height, generation: lease.generation });
