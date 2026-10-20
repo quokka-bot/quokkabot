@@ -1224,27 +1224,33 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     const cards = async () => (await db.query<{ event: TaskEvent }>(
       "select event from task_events where task_id = $1 and event->>'kind' = 'domain_request' order by seq", [taskId])).rows.map(row => row.event);
     try {
-      // The agent asks for the same site twice, once by host and once by site, before the owner decides.
+      // The agent asks for the same site twice, once by host and once by site, before the owner decides. The second
+      // call also names a new site, which alone gets a new card.
       const first = cli.callTool({ name: "request_domains", arguments: { domains: ["docs.example.com"], reason: "Read the docs" } });
       await waitFor(async () => (await requests()).length === 1 ? true : undefined, "first site request");
-      const second = cli.callTool({ name: "request_domains", arguments: { domains: ["example.com"], reason: "Read the docs again" } });
-      for (const outcome of await Promise.all([first, second])) {
-        expect(textOf(outcome)).toContain("status: blocked");
-        expect(textOf(outcome)).toContain("The owner has not decided yet. End your turn now; you continue when they decide.");
-      }
-      expect(await requests()).toEqual([expect.objectContaining({ domains: ["*.example.com"], decision: null })]);
-      expect(await cards()).toHaveLength(1);
+      await new Promise((r) => setTimeout(r, 3_000));
+      const second = cli.callTool({ name: "request_domains", arguments: { domains: ["example.com", "cdn.example.net"], reason: "Read the docs again" } });
+      await waitFor(async () => (await requests()).length === 2 ? true : undefined, "second site request");
+      expect(textOf(await first)).toContain("The owner has not decided yet. End your turn now; you continue when they decide.");
+      expect(await requests()).toEqual([
+        expect.objectContaining({ domains: ["*.example.com"], decision: null }),
+        expect.objectContaining({ domains: ["*.example.net"], decision: null }),
+      ]);
+      expect((await cards()).map(card => (card as { domains: string[] }).domains)).toEqual([["*.example.com"], ["*.example.net"]]);
       const runRow = (await db.query<{ fence_reason: string | null }>("select fence_reason from runs where id = $1", [run.runId])).rows[0];
       expect(runRow?.fence_reason).toBe("domain_request");
       expect((await db.query<{ blocked_reason: string | null }>("select blocked_reason from tasks where id = $1", [taskId])).rows[0]?.blocked_reason).toBe("domain_request");
-      // The parked run cannot ask again; the card stays the only one.
+      // The parked run cannot ask again; the cards stay as they are.
       expect(textOf(await cli.callTool({ name: "request_domains", arguments: { domains: ["example.com"], reason: "Once more" } }))).toContain("You are waiting for the owner.");
-      expect(await cards()).toHaveLength(1);
+      expect(await cards()).toHaveLength(2);
 
-      // The owner decides while the run is still ending its turn: the decision waits as the next prompt.
-      const [open] = await requests();
+      // The owner decides both while the second call still waits and the run is ending its turn: the second call is
+      // told to end its turn, and the decisions wait as the next prompt.
+      const [open, cdn] = await requests();
       expect((await api("POST", `/api/domain-requests/${open?.id}/decide`, { decision: "allow_task", attended: false })).status).toBe(200);
-      const prompt = "Allowed: example.com, each with all its subdomains. Continue.";
+      expect((await api("POST", `/api/domain-requests/${cdn?.id}/decide`, { decision: "refuse", attended: false })).status).toBe(200);
+      expect(textOf(await second)).toContain("You are waiting for the owner. End your turn now; you continue when they decide.");
+      const prompt = "Allowed: example.com, each with all its subdomains. The owner refused example.net. Find another way or tell the owner what you cannot do. Continue.";
       expect((await db.query<{ pending_prompt: string | null }>("select pending_prompt from tasks where id = $1", [taskId])).rows[0]?.pending_prompt).toBe(prompt);
       await finishRun(run, "Waiting for example.com.");
       const resumed = await waitFor(() => [...runs.values()][before + 1], "run resumed on the late decision");

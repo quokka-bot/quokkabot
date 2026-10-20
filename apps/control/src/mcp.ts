@@ -612,30 +612,39 @@ export class McpEndpoint {
     if (created) {
       await this.audit.append(ctx.agentId, "agent", "domain.requested", { requestId: created.id, domains: created.domains, reason: this.audit.textDigest(input.reason) });
     }
-    const deadline = Date.now() + this.siteWaitMs;
-    while (Date.now() < deadline) {
+    // Each look happens under the task's row lock, as domainDecided does, so a decision is reported once: here while
+    // the run works, or in the prompt that resumes the task once the run is parked.
+    const look = (deadlinePassed: boolean) => withTx(this.db, async (tx): Promise<ToolOutcome | null> => {
+      await tx.query("select 1 from tasks where id = $1 for update", [ctx.task.id]);
       const rows = await many<{ id: string; domains: string[]; decision: string | null; attended: boolean }>(
-        this.db,
+        tx,
         "select id, domains, decision, attended from domain_requests where id = any($1::uuid[])",
         [waitIds],
       );
       if (rows.some((row) => row.decision === "skip")) {
         return { status: "blocked", text: `The owner wrote you a message instead of allowing ${sites}. End your turn now; their message starts your next turn.` };
       }
+      // Another call of this run already parked it: the decisions reach the agent in the next prompt.
+      const run = await one<{ fenced_at: Date | null }>(tx, "select fenced_at from runs where id = $1", [ctx.runId]);
+      if (run.fenced_at) return { status: "blocked", text: "You are waiting for the owner. End your turn now; you continue when they decide." };
       if (rows.every((row) => row.decision !== null)) {
-        await this.db.query("update domain_requests set reported = true where id = any($1::uuid[])", [waitIds]);
+        await tx.query("update domain_requests set reported = true where id = any($1::uuid[])", [waitIds]);
         const allowed = rows.some((row) => row.decision !== "refuse");
         return { status: allowed ? "ok" : "blocked", text: `${siteDecisionText(rows)}${allowed ? " Reload the page." : ""}` };
       }
+      if (!deadlinePassed) return null;
+      // The request stays open: the run ends its turn and the owner's decision starts the next one, whenever it comes.
+      await tx.query("update runs set fenced_at = coalesce(fenced_at, now()), fence_reason = coalesce(fence_reason, 'domain_request') where id = $1", [ctx.runId]);
+      const parked = await tx.query("update tasks set blocked_reason = 'domain_request', updated_at = now() where id = $1 and blocked_reason is null", [ctx.task.id]);
+      if (parked.rowCount === 1) await this.events.append(tx, ctx.task.id, { kind: "state", state: "running", blockedReason: "domain_request" });
+      return { status: "blocked", text: "The owner has not decided yet. End your turn now; you continue when they decide." };
+    });
+    const deadline = Date.now() + this.siteWaitMs;
+    for (;;) {
+      const outcome = await look(Date.now() >= deadline);
+      if (outcome) return outcome;
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
-    // The request stays open: the run ends its turn and the owner's decision starts the next one, whenever it comes.
-    await this.tasks.fence(ctx.runId, "domain_request");
-    const parked = await this.db.query("update tasks set blocked_reason = 'domain_request', updated_at = now() where id = $1 and blocked_reason is null", [ctx.task.id]);
-    if (parked.rowCount === 1) await this.events.append(this.db, ctx.task.id, { kind: "state", state: "running", blockedReason: "domain_request" });
-    // A decision that landed between the last look and the fence found the run still working; resume on it now.
-    await this.tasks.domainDecided(ctx.task.id);
-    return { status: "blocked", text: "The owner has not decided yet. End your turn now; you continue when they decide." };
   }
 
   private async askOwner(ctx: CallContext, question: string): Promise<ToolOutcome> {
