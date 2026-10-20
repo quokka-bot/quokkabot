@@ -53,7 +53,7 @@ function OwnerNameSection() {
   const client = useQueryClient();
   const me = useQuery({ queryKey: [connection.origin, "me"], queryFn: api.me });
   return <Section title="Your name">
-    {me.data ? <OwnerNameForm initial={me.data.ownerName} save={async (name) => {
+    {me.isPending ? <Text style={styles.help}>Loading your name…</Text> : me.data ? <OwnerNameForm initial={me.data.ownerName} save={async (name) => {
       const saved = await api.setOwnerName(name);
       // A read that started before the save must not put the old name back.
       await client.cancelQueries({ queryKey: [connection.origin, "me"] });
