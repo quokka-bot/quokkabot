@@ -1755,6 +1755,28 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     }
   }, 30_000);
 
+  it("lets only a signed-in owner from the app's own origin read or change the AI consent record", async () => {
+    const path = `/api/agents/${AGENT}/ai-consent`;
+    const generation = (await api("GET", `/api/agents/${AGENT}`)).body.generation;
+    const allow = { allow: true, provider: "anthropic", disclosureVersion: DISCLOSURE, generation };
+    const rowsBefore = (await db.query("select count(*)::int as n from ai_consents")).rows[0].n;
+    expect((await api("GET", path, undefined, { cookie: false })).body.error.code).toBe("signed_out");
+    expect((await api("PUT", path, { allow: false, provider: "anthropic" }, { cookie: false })).body.error.code).toBe("signed_out");
+    const crossOrigin = await api("PUT", path, { allow: false, provider: "anthropic" }, { origin: "https://evil.example" });
+    expect(crossOrigin.status).toBe(403);
+    expect(crossOrigin.body.error.code).toBe("bad_origin");
+    expect((await api("PUT", path, { allow: false, provider: "anthropic" }, { origin: null })).status).toBe(403);
+    // A revoked phone's token is signed out.
+    const phone = await phoneSession({ name: "Lost iPhone" });
+    await db.query("update sessions set revoked_at = now() where hash = $1", [sha256Hex(phone.token)]);
+    const revoked = await api("PUT", path, { allow: false, provider: "anthropic" }, { cookie: false, origin: null, headers: bearer(phone.token) });
+    expect(revoked.status).toBe(401);
+    expect(revoked.body.error.code).toBe("signed_out");
+    expect((await api("PUT", path, { ...allow, extra: 1 })).status).toBe(400);
+    expect((await db.query("select count(*)::int as n from ai_consents")).rows[0].n).toBe(rowsBefore);
+    expect((await api("GET", path)).body).toMatchObject({ state: "granted", allowed: true });
+  });
+
   it("keeps the audit log append-only for the application role", async () => {
     await expect(db.query("update audit_events set data = '{}' where seq = 1")).rejects.toThrow(/permission denied/);
     await expect(db.query("delete from audit_events")).rejects.toThrow(/permission denied/);
