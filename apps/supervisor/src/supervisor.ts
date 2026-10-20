@@ -468,7 +468,7 @@ export class Supervisor {
         current.endedBy = null;
         await this.requireTools(agent);
         return this.launch(agent, "tools", this.execBody(cmd));
-      });
+      }).catch((error: unknown) => { throw current.endedBy ?? error; });
       try { return await work(launched); }
       catch (error) { throw current.endedBy ?? error; }
     } finally { works.delete(current); }

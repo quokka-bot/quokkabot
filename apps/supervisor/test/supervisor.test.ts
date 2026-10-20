@@ -519,6 +519,17 @@ describe("supervisor logic with in-memory Docker streams", () => {
     await expect(listing).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
   });
 
+  it("answers killed when a kill makes the helper's exec start fail", async () => {
+    await service.start(agent());
+    let killing: Promise<unknown> = Promise.resolve();
+    vi.mocked(service.docker.startExec).mockImplementationOnce(async () => {
+      killing = service.kill(agent());
+      throw new DockerError(409, "Container qb-tools-1 is not running");
+    });
+    await expect(service.files(agent(), { op: "list", scope: "workspace", dir: "" })).rejects.toMatchObject({ status: 409, code: "killed" });
+    await killing;
+  });
+
   it("forgets a stop that came and went while the request waited for the lifecycle lock", async () => {
     await service.start(agent());
     plans.push({ stdout: '{"op":"li', exitCode: 137 });
