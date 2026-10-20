@@ -12,6 +12,7 @@ import type { BrowserService } from "../src/service.js";
 import { nodeProcessRunner, systemClock } from "../src/runtime.js";
 import type { Clock, ManagedProcess, ProcessRunner } from "../src/runtime.js";
 
+export const SCREEN_RESIZE = "/fake/selkies-resize";
 export const RUN_ID = "03dd93a9-2bce-4eb0-aec0-d974be4b3954";
 export const GUID = "6301f656-5670-4518-8065-56e857e301fe";
 export const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=", "base64");
@@ -85,6 +86,8 @@ export class FakeCdp extends EventEmitter implements CdpConnection {
   onSend: ((method: string) => void) | undefined;
   cookies: Record<string, unknown>[] = [];
   targets: { targetId?: string; type: string; url: string }[] = [{ type: "page", url: "https://example.com/" }];
+  // Window state per page target; each target has its own window, numbered from 1.
+  windowStates: string[] = ["maximized"];
   failMethod: string | undefined;
   frames: FakeFrame[] = [{
     id: "frame_main", origin: "https://example.com", parentId: null,
@@ -111,6 +114,15 @@ export class FakeCdp extends EventEmitter implements CdpConnection {
       ...this.frames.filter((frame) => frame.outOfProcess).map((frame) => ({ targetId: frame.id, type: "iframe", url: `${frame.origin}/login` })),
     ] };
     if (method === "Browser.close") this.onCloseBrowser?.();
+    if (method === "Browser.getWindowForTarget") return { windowId: Number(String(params.targetId).replace("target_", "")) };
+    if (method === "Browser.getWindowBounds") return { bounds: { windowState: this.windowStates[Number(params.windowId) - 1] ?? "normal" } };
+    if (method === "Browser.setWindowBounds") {
+      const next = (params.bounds as { windowState: string }).windowState;
+      const index = Number(params.windowId) - 1;
+      // Chrome 156: "To maximize a minimized or fullscreen window, restore it to normal state first."
+      if (next === "maximized" && ["minimized", "fullscreen"].includes(this.windowStates[index] ?? "")) throw new Error("restore it to normal state first");
+      this.windowStates[index] = next;
+    }
     if (method === "Target.attachToTarget") return { sessionId: `session_${String(params.targetId)}` };
     if (method === "Page.getFrameTree") {
       function tree(frames: FakeFrame[], parentId: string | null): unknown {
@@ -260,6 +272,9 @@ export interface Harness {
   runner: ProcessRunner;
   chromeExit(): void;
   starts: { executable: string; argv: readonly string[]; env: NodeJS.ProcessEnv }[];
+  // Every size passed to the screen resize command, and how the fake answers the next ones.
+  resizes: string[];
+  screen: { fail: boolean; realized?: string | undefined };
 }
 export async function harness(options: { clock?: Clock; timeoutMs?: number; config?: Record<string, unknown>; env?: NodeJS.ProcessEnv } = {}): Promise<Harness> {
   const root = await mkdtemp(join(tmpdir(), "quokkabot-browser-test-"));
@@ -280,8 +295,16 @@ export async function harness(options: { clock?: Clock; timeoutMs?: number; conf
   // A real, otherwise idle daemon process lets takeover tests verify SIGKILL and CLI exit independently.
   const daemons: ChildProcess[] = [];
   let daemon: ChildProcess | undefined;
+  const resizes: string[] = [];
+  const screen: Harness["screen"] = { fail: false };
   const runner: ProcessRunner = {
-    run(executable, argv, runOptions) {
+    async run(executable, argv, runOptions) {
+      if (executable === SCREEN_RESIZE) {
+        resizes.push(argv.join(" "));
+        if (screen.fail) return { stdout: "None\n", stderr: "", exitCode: 0 };
+        const [width, height] = (screen.realized ?? argv[0]!).split("x");
+        return { stdout: `INFO:display:Successfully applied RandR mode\n(${width}, ${height})\n`, stderr: "", exitCode: 0 };
+      }
       if (argv[7] === "stream" && (daemon === undefined || daemon.exitCode !== null || daemon.signalCode !== null)) {
         daemon = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
         daemons.push(daemon);
@@ -303,7 +326,7 @@ export async function harness(options: { clock?: Clock; timeoutMs?: number; conf
     },
   };
   const service = await createBrowserService({
-    token: "test-token", chrome: "/fake/chrome", agentBrowser: executable, proxy: "http://egress:3128",
+    token: "test-token", chrome: "/fake/chrome", agentBrowser: executable, screenResize: SCREEN_RESIZE, proxy: "http://egress:3128",
     cdp, runner, clock, roots: { staging: join(root, "staging"), scratch: join(root, "scratch"), daemon: join(root, "daemon") },
     env: { PATH: process.env.PATH, HOME: root, TEST_LOG: log, TEST_CONFIG: configPath, NODE_ENV: "test", ...options.env },
     commandTimeoutMs: options.timeoutMs ?? 3000,
@@ -312,7 +335,7 @@ export async function harness(options: { clock?: Clock; timeoutMs?: number; conf
   await service.setControlLease({ holder: "agent", generation: 2, expiresAt: null });
   let number = 0;
   return {
-    service, root, cdp, runner, starts, chromeExit: () => exit(),
+    service, root, cdp, runner, starts, resizes, screen, chromeExit: () => exit(),
     config: async (patch) => { const config = JSON.parse(await readFile(configPath, "utf8")) as Record<string, unknown>; await writeFile(configPath, JSON.stringify({ ...config, ...patch })); },
     calls: async () => (await readFile(log, "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]),
     command: (op, generation = 2, id) => service.execute({ commandId: id ?? `command_${++number}`, runId: RUN_ID, generation, op }),

@@ -43,6 +43,7 @@ export const AuditType = z.enum([
   "egress.blocked_summary",
   "takeover.started",
   "takeover.ended",
+  "takeover.screen",
   "attended.opened",
   "attended.closed",
   "terminal.opened",

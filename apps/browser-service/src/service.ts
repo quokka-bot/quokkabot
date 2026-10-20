@@ -8,10 +8,10 @@ import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { z } from "zod";
 import {
-  BrowserCommandRequest, BrowserCommandResult, ControlLease, DownloadId, ElementRef, IsoTime, LIMITS,
-  MUTATING_BROWSER_OPS, OwnerFillRequest, SecretFillRequest, SiteDataClearRequest, TabRef,
+  BrowserCommandRequest, BrowserCommandResult, ControlLease, DESKTOP_SCREEN, DownloadId, ElementRef, IsoTime, LIMITS,
+  MUTATING_BROWSER_OPS, OwnerFillRequest, ScreenRequest, SecretFillRequest, SiteDataClearRequest, TabRef,
 } from "@quokkabot/shared";
-import type { BrowserOp, OwnerFocusResult, TabInfo } from "@quokkabot/shared";
+import type { BrowserOp, OwnerFocusResult, ScreenSize, TabInfo } from "@quokkabot/shared";
 import { OWNER_INSERTION_WINDOW_MS } from "./cdp.js";
 import type { CdpConnection } from "./cdp.js";
 import { DownloadError, Downloads } from "./downloads.js";
@@ -26,6 +26,8 @@ export interface BrowserServiceDependencies {
   token: string;
   chrome: string;
   agentBrowser: string;
+  // Selkies' resize command: sets the X screen to "WxH" and prints the realized "(W, H)".
+  screenResize: string;
   proxy: string;
   runner: ProcessRunner;
   cdp: CdpConnection;
@@ -98,7 +100,7 @@ function waitArgv(op: Extract<BrowserOp, { op: "wait" }>): string[] {
 }
 
 export async function createBrowserService(deps: BrowserServiceDependencies) {
-  if (!deps.token || !deps.chrome || !deps.agentBrowser) throw new Error("Browser token and executable paths are required");
+  if (!deps.token || !deps.chrome || !deps.agentBrowser || !deps.screenResize) throw new Error("Browser token and executable paths are required");
   const launchArgv = chromeArgv(deps.proxy);
   for (const root of [deps.roots.scratch, deps.roots.daemon]) {
     await mkdir(root, { recursive: true, mode: 0o700 });
@@ -110,6 +112,11 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
   const tokenHash = createHash("sha256").update(`Bearer ${deps.token}`).digest();
   const processEnv: NodeJS.ProcessEnv = { ...deps.env, DISPLAY: ":1", AGENT_BROWSER_SOCKET_DIR: deps.roots.daemon };
   let lease: ControlLease = { holder: "paused", generation: 1, expiresAt: null };
+  // The screen size the current lease wants, and the one the X server shows (unknown until the first resize). The
+  // agent's commands wait until both match, so the agent never works on a screen fitted to the owner's phone.
+  let screenWanted: ScreenSize = { ...DESKTOP_SCREEN };
+  let screenShown: ScreenSize | undefined;
+  let screenQueue: Promise<unknown> = Promise.resolve();
   let leaseChanging = 0;
   let leaseQueue = Promise.resolve();
   let chrome: ManagedProcess | undefined;
@@ -260,7 +267,8 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
   async function refreshReadiness(): Promise<boolean> {
     if (readinessCheck) return readinessCheck;
     readinessCheck = (async () => {
-      if (!chromeUp || !cdpConfigured || !deps.cdp.connected || stopping || fault || running?.abort.signal.aborted) { ready = false; return false; }
+      if (!screenMatches()) await showScreen().catch(() => undefined);
+      if (!chromeUp || !cdpConfigured || !deps.cdp.connected || stopping || fault || running?.abort.signal.aborted || !screenMatches()) { ready = false; return false; }
       downloads.assertHealthy();
       const before = await identity();
       if (ready && before !== undefined && before === daemonIdentity) return true;
@@ -816,8 +824,65 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
       }
       dropRefs(); clearOwnerFocus();
       lease = next;
+      if (next.holder !== "owner") {
+        screenWanted = { ...DESKTOP_SCREEN };
+        // A failed resize leaves the agent fenced (screenMatches) and maintain() tries again every second.
+        await showScreen().catch(() => { ready = false; });
+      }
       return { ...lease };
     }).finally(() => { leaseChanging -= 1; });
+    leaseQueue = update.then(() => undefined, () => undefined);
+    return update;
+  }
+  function screenMatches(): boolean {
+    return screenShown !== undefined && screenShown.width === screenWanted.width && screenShown.height === screenWanted.height;
+  }
+  // Resizes the X screen to screenWanted, then maximizes every Chrome window so none is left outside a smaller screen
+  // or in a corner of a larger one. Resizes run one at a time.
+  function showScreen(): Promise<void> {
+    const next = screenQueue.then(async () => {
+      const wanted = { ...screenWanted };
+      if (screenShown !== undefined && screenShown.width === wanted.width && screenShown.height === wanted.height) return;
+      screenShown = undefined;
+      const result = await deps.runner.run(deps.screenResize, [`${wanted.width}x${wanted.height}`], { timeoutMs: 15_000, env: processEnv, cwd: deps.roots.scratch });
+      const realized = /\((\d+), (\d+)\)\s*$/.exec(result.stdout);
+      if (result.exitCode !== 0 || !realized || Number(realized[1]) !== wanted.width || Number(realized[2]) !== wanted.height) {
+        throw new Error("screen resize failed");
+      }
+      screenShown = wanted;
+      if (chromeUp && deps.cdp.connected) await maximizeWindows();
+    });
+    screenQueue = next.catch(() => undefined);
+    return next;
+  }
+  async function maximizeWindows(): Promise<void> {
+    const targets = z.object({ targetInfos: z.array(z.object({ targetId: z.string(), type: z.string() })) })
+      .parse(await deps.cdp.send("Target.getTargets"));
+    const windows = new Set<number>();
+    for (const target of targets.targetInfos.filter((info) => info.type === "page")) {
+      const found = z.object({ windowId: z.number().int() }).safeParse(await deps.cdp.send("Browser.getWindowForTarget", { targetId: target.targetId }).catch(() => undefined));
+      if (found.success) windows.add(found.data.windowId);
+    }
+    for (const windowId of windows) {
+      // The window manager refits a maximized window by itself. Chrome maximizes a minimized or fullscreen window only
+      // from the normal state.
+      const { bounds } = z.object({ bounds: z.object({ windowState: z.string() }) })
+        .parse(await deps.cdp.send("Browser.getWindowBounds", { windowId }));
+      if (bounds.windowState === "maximized") continue;
+      if (bounds.windowState !== "normal") await deps.cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "normal" } });
+      await deps.cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "maximized" } });
+    }
+  }
+  // Only the owner's current lease may fit the screen to a phone. The request waits for any lease change in flight.
+  function setScreen(input: unknown): Promise<ScreenSize> {
+    const request = ScreenRequest.parse(input);
+    const update = leaseQueue.then(async () => {
+      const refused = ownerRefusal(request.leaseGeneration);
+      if (refused) throw new OperationError("blocked", refused);
+      screenWanted = { width: request.width, height: request.height };
+      await showScreen();
+      return { ...screenWanted };
+    });
     leaseQueue = update.then(() => undefined, () => undefined);
     return update;
   }
@@ -841,6 +906,8 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
   async function maintain(): Promise<void> {
     if (stopping) return;
     try {
+      // Before Chrome starts, so its first window opens at the right size. The agent stays fenced until it works.
+      if (!screenMatches()) await showScreen().catch(() => { ready = false; });
       if (!chromeUp) launchChrome();
       if (!deps.cdp.connected) await deps.cdp.connect();
       if (!cdpConfigured) {
@@ -907,6 +974,8 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
       }
       if (request.method === "GET" && url.pathname === "/v1/control-lease") return { statusCode: 200, body: { ...lease } };
       if (request.method === "PUT" && url.pathname === "/v1/control-lease") return { statusCode: 200, body: await setControlLease(request.body) };
+      if (request.method === "GET" && url.pathname === "/v1/screen") return { statusCode: 200, body: screenShown ?? null };
+      if (request.method === "PUT" && url.pathname === "/v1/screen") return { statusCode: 200, body: await setScreen(request.body) };
       if (request.method === "GET" && url.pathname === "/v1/downloads") {
         const since = url.searchParams.get("since");
         if (since !== null) IsoTime.parse(since);
@@ -965,7 +1034,7 @@ export async function createBrowserService(deps: BrowserServiceDependencies) {
   const server = createServer((request, response) => { void http(request, response); });
   server.requestTimeout = 60_000;
   server.headersTimeout = 10_000;
-  return { server, start, shutdown, execute, handle, setControlLease, refreshReadiness, downloads };
+  return { server, start, shutdown, execute, handle, setControlLease, setScreen, refreshReadiness, downloads };
 }
 export type BrowserService = Awaited<ReturnType<typeof createBrowserService>>;
 

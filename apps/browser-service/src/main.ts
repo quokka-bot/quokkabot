@@ -15,7 +15,7 @@ function required(name: string): string {
 async function main(): Promise<void> {
   const service = await createBrowserService({
     token: required("QUOKKABOT_BROWSER_SERVICE_TOKEN"), chrome: required("QUOKKABOT_CHROME"),
-    agentBrowser: required("QUOKKABOT_AGENT_BROWSER"), proxy: required("QUOKKABOT_PROXY"),
+    agentBrowser: required("QUOKKABOT_AGENT_BROWSER"), screenResize: required("QUOKKABOT_SCREEN_RESIZE"), proxy: required("QUOKKABOT_PROXY"),
     runner: nodeProcessRunner, cdp: new BrowserCdp(), clock: systemClock,
     roots: { staging: "/staging", scratch: "/tmp/quokkabot-browser", daemon: join(homedir(), ".agent-browser") },
     // Do not forward unrelated service credentials, provider settings, or plugin configuration to children.

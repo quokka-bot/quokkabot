@@ -216,6 +216,20 @@ export const OwnerFillRequest = z.object({
 }).strict();
 export type OwnerFillRequest = z.infer<typeof OwnerFillRequest>;
 
+// The computer's screen. The agent always works on the desktop size. While the owner has control, a phone may fit
+// the screen to itself (PUT /v1/screen with the owner's lease generation); every lease that leaves the owner puts
+// the desktop size back. Widths are whole 8-pixel cells and heights even, so the X server realizes them exactly. The
+// narrowest screen is 504: Chrome's windows are at least 500 pixels wide, and a narrower screen leaves them cut off.
+export const DESKTOP_SCREEN = Object.freeze({ width: 1280, height: 800 });
+export const SCREEN_MIN_WIDTH = 504;
+export const ScreenSize = z.object({
+  width: z.number().int().min(SCREEN_MIN_WIDTH).max(1920).multipleOf(8),
+  height: z.number().int().min(240).max(1920).multipleOf(2),
+}).strict();
+export type ScreenSize = z.infer<typeof ScreenSize>;
+export const ScreenRequest = ScreenSize.extend({ leaseGeneration: z.number().int().min(1) }).strict();
+export type ScreenRequest = z.infer<typeof ScreenRequest>;
+
 
 // POST /v1/site-data/clear: when an attended session ends, every cookie and every origin's storage that matches one of
 // the patterns is removed (any subdomain, http and https). The response lists what was cleared; an error means some of
