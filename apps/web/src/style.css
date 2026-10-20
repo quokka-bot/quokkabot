@@ -243,6 +243,15 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .panel-card.links a:hover { background: var(--sidebar); text-decoration: none; }
 .panel-actions { display: flex; gap: 8px; margin-top: 12px; }
 .ok-text { color: var(--green); }
+.agent-name { align-self: stretch; }
+/* The left padding matches the pencil and its gap, so the name stays centred. */
+.agent-name-button { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 0; padding: 3px 8px 3px 27px; border: 0; border-radius: 8px; background: transparent; font-size: inherit; font-weight: inherit; }
+.agent-name-button span { min-width: 0; overflow-wrap: anywhere; }
+.agent-name-button svg { flex: none; color: var(--muted); }
+.agent-name-button:hover svg, .agent-name-button:focus-visible svg { color: var(--text); }
+.agent-name-form { margin: 8px 0 2px; }
+.agent-name-form input { min-height: 34px; margin: 0; padding: 4px 10px; font-size: 17px; font-weight: 500; text-align: center; }
+.agent-name-form .error { margin: 6px 0 0; }
 .warn-text { color: var(--amber); }
 .panel .card { padding: 12px; }
 .panel .files-grid { grid-template-columns: minmax(0, 1fr); }

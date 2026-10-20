@@ -98,7 +98,9 @@ export function OwnerSettings() {
 }
 
 export function Settings({ agent }: { agent: AgentSummary }) {
-  const [name, setName] = useState(agent.name);
+  // Null until the owner types here, so a rename in the details panel shows in this field and Save keeps it.
+  const [typedName, setName] = useState<string | null>(null);
+  const name = typedName ?? agent.name;
   const [model, setModel] = useState(agent.model);
   const [effort, setEffort] = useState(agent.effort);
   const save = useAction(() => api.settings(agent.id, model.trim(), effort, name.trim()));

@@ -687,7 +687,7 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
     await requireSession(request);
     const agentId = await agentParam(request.params.agentId);
     const body = parse(AgentSettingsRequest, request.body);
-    await db.query("update agents set model = $2, effort = $3, name = coalesce($4, name) where id = $1", [agentId, body.model, body.effort, body.name ?? null]);
+    await db.query("update agents set model = coalesce($2, model), effort = coalesce($3, effort), name = coalesce($4, name) where id = $1", [agentId, body.model ?? null, body.effort ?? null, body.name ?? null]);
     await audit.append(agentId, "owner", "agent.settings_changed", { ...body });
     return agentSummary(agentId);
   });

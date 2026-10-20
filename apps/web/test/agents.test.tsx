@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +13,9 @@ const second: AgentSummary = { ...agent, id: secondId as AgentSummary["id"], ind
 let agents: AgentSummary[];
 let total: number;
 let client: QueryClient;
+// Agent reads that never answer, to show what the window shows before its next poll.
+let holdAgentReads: boolean;
+let settingsFailure: { status: number; code: string; message: string } | null;
 const fetchMock = vi.fn<typeof fetch>();
 function Location() { const location = useLocation(); return <output aria-label="Route">{location.pathname}</output>; }
 function open(path = `/agents/${agentId}`) {
@@ -29,12 +32,13 @@ async function openNewAgent(which: "top" | "list" = "list") {
   fireEvent.click(button);
 }
 beforeEach(() => {
-  agents = [{ ...agent }]; total = 3;
+  agents = [{ ...agent }]; total = 3; holdAgentReads = false; settingsFailure = null;
   localStorage.clear();
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (input, init) => {
     const path = String(input);
     const method = init?.method ?? "GET";
+    if (holdAgentReads && method === "GET" && /^\/api\/agents(\/[^/]+)?$/.test(path)) return new Promise<Response>(() => undefined);
     if (path === "/api/me") return json(me);
     if (path === "/api/agents") {
       if (method === "POST") {
@@ -55,6 +59,7 @@ beforeEach(() => {
         return json(item);
       }
       if (match[2] === "/settings") {
+        if (settingsFailure) return json({ error: { code: settingsFailure.code, message: settingsFailure.message } }, settingsFailure.status);
         const values = JSON.parse(String(init?.body)) as { name: string; model: string; effort: AgentSummary["effort"] };
         Object.assign(item, values);
         return json(item);
@@ -177,5 +182,99 @@ describe("agent lifecycle UI", () => {
   it("keeps every slot's avatar colour distinct", () => {
     expect(new Set(Array.from({ length: 99 }, (_, index) => agentColour(index + 1))).size).toBe(99);
     expect(agentColour(2)).not.toBe(agentColour(1));
+  });
+});
+
+describe("renaming in the details panel", () => {
+  const settingsRequests = () => fetchMock.mock.calls.filter(([url, init]) => url === `/api/agents/${agentId}/settings` && init?.method === "PUT");
+  async function startRename() {
+    const button = await screen.findByRole("button", { name: "Rename Office" });
+    // A native button: Tab reaches it, and Enter or Space press it.
+    expect(button.tagName).toBe("BUTTON");
+    expect(button.closest("h2")).toBeTruthy();
+    fireEvent.click(button);
+    const field = screen.getByRole<HTMLInputElement>("textbox", { name: "Agent name" });
+    expect(document.activeElement).toBe(field);
+    expect([field.selectionStart, field.selectionEnd]).toEqual([0, "Office".length]);
+    return field;
+  }
+
+  it("saves a trimmed name with Enter and shows it in the sidebar, title and composer before the next poll", async () => {
+    open();
+    const field = await startRename();
+    fireEvent.change(field, { target: { value: "  Invoices  " } });
+    holdAgentReads = true;
+    fireEvent.submit(field);
+    const renamed = await screen.findByRole("button", { name: "Rename Invoices" });
+    expect(document.activeElement).toBe(renamed);
+    expect(JSON.parse(String(settingsRequests()[0]?.[1]?.body))).toEqual({ name: "Invoices" });
+    expect(within(screen.getByRole("navigation", { name: "Agents" })).getByText("Invoices")).toBeTruthy();
+    expect(document.querySelector(".title-pill")?.textContent).toBe("Invoices");
+    expect(screen.getByRole("textbox", { name: "New task" }).getAttribute("placeholder")).toBe("New task for Invoices");
+    expect(screen.getByRole("status", { name: "" }).textContent).toBe("Name saved.");
+  });
+  it("saves when the field loses focus and leaves focus where it went", async () => {
+    open();
+    const field = await startRename();
+    fireEvent.change(field, { target: { value: "Receipts" } });
+    const close = screen.getByRole("button", { name: "Close details" });
+    act(() => close.focus());
+    await screen.findByRole("button", { name: "Rename Receipts" });
+    expect(document.activeElement).toBe(close);
+    expect(settingsRequests()).toHaveLength(1);
+  });
+  it("keeps the old name on Escape and sends nothing", async () => {
+    open();
+    const field = await startRename();
+    fireEvent.change(field, { target: { value: "Receipts" } });
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Rename Office" }));
+    expect(screen.queryByRole("textbox", { name: "Agent name" })).toBeNull();
+    expect(settingsRequests()).toHaveLength(0);
+  });
+  it("closes without a request when the name is unchanged", async () => {
+    open();
+    const field = await startRename();
+    fireEvent.change(field, { target: { value: " Office " } });
+    fireEvent.submit(field);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Rename Office" }));
+    expect(settingsRequests()).toHaveLength(0);
+  });
+  it("refuses an empty or a 41-character name in place and sends nothing", async () => {
+    open();
+    const field = await startRename();
+    fireEvent.change(field, { target: { value: "   " } });
+    fireEvent.submit(field);
+    expect(screen.getByRole("alert").textContent).toBe("Type a name.");
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    expect(field.getAttribute("aria-describedby")).toBe(screen.getByRole("alert").id);
+    fireEvent.change(field, { target: { value: "x".repeat(41) } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.blur(field);
+    expect(screen.getByRole("alert").textContent).toBe("Use 40 characters or fewer.");
+    expect(field.value).toBe("x".repeat(41));
+    expect(settingsRequests()).toHaveLength(0);
+  });
+  it("shows a refused save next to the field and keeps the typed name", async () => {
+    settingsFailure = { status: 409, code: "agent_removing", message: "This agent is being removed." };
+    open();
+    const field = await startRename();
+    fireEvent.change(field, { target: { value: "Invoices" } });
+    fireEvent.submit(field);
+    expect((await screen.findByRole("alert")).textContent).toBe("This agent is being removed.");
+    expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Agent name" }).value).toBe("Invoices");
+    expect(screen.getByRole("navigation", { name: "Agents" }).textContent).toContain("Office");
+  });
+  it("shows a panel rename in an untouched settings form, so Save keeps it", async () => {
+    open(`/agents/${agentId}/settings`);
+    const name = await screen.findByRole<HTMLInputElement>("textbox", { name: "Name" });
+    const field = await startRename();
+    fireEvent.change(field, { target: { value: "Invoices" } });
+    fireEvent.submit(field);
+    await screen.findByRole("button", { name: "Rename Invoices" });
+    expect(name.value).toBe("Invoices");
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByText("Settings saved.");
+    expect(JSON.parse(String(settingsRequests()[1]?.[1]?.body))).toMatchObject({ name: "Invoices" });
   });
 });

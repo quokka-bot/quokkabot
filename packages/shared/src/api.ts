@@ -116,7 +116,7 @@ export type AgentsResponse = z.infer<typeof AgentsResponse>;
 // POST /api/agents { name }                        -> AgentSummary
 // DELETE /api/agents/:agentId                      -> {}
 // GET  /api/agents/:agentId                         -> AgentSummary
-// PUT  /api/agents/:agentId/settings                -> AgentSummary
+// PUT  /api/agents/:agentId/settings { name?, model?, effort? } -> AgentSummary (changes only the fields sent)
 // POST /api/agents/:agentId/computer/start          -> ComputerView
 // POST /api/agents/:agentId/computer/stop           -> ComputerView
 // POST /api/agents/:agentId/kill                    -> ComputerView   (no confirmation; instant)
@@ -128,7 +128,9 @@ export type AgentsResponse = z.infer<typeof AgentsResponse>;
 // POST /api/agents/:agentId/attended  { open }       -> ComputerView
 // POST /api/agents/:agentId/view-ticket              -> { url }  (one-time URL on the viewer origin)
 // GET  /api/agents/:agentId/terminal (WebSocket)     needs fresh auth; frames are TerminalClientFrame/ServerFrame
-export const AgentSettingsRequest = z.object({ name: AgentName.optional(), model: ModelId, effort: Effort }).strict();
+// A rename sends only the name, so it never writes back a model or effort another app changed a moment earlier.
+export const AgentSettingsRequest = z.object({ name: AgentName.optional(), model: ModelId.optional(), effort: Effort.optional() }).strict()
+  .refine(body => body.name !== undefined || body.model !== undefined || body.effort !== undefined, { message: "Send a name, a model or an effort." });
 export const TakeoverRequest = z.object({ action: z.enum(["take", "return"]) }).strict();
 // Native fields during the owner's takeover. Fill echoes the inspected focusId, never a caller-chosen origin.
 // The browser binds that short-lived handle to the inspected lease. Neither response returns a typed value.

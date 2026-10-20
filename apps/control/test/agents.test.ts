@@ -62,7 +62,7 @@ class SlotDb {
     if (sql.startsWith("update agents set name")) { Object.assign(row!, { name: values[1], model: values[2], effort: values[3], cli_signed_in: "no", generation: row!.generation + 1, added_at: new Date() }); return { rows: [] }; }
     if (sql.startsWith("update agents set removing_at")) { row!.removing_at = new Date(); return { rows: [] }; }
     if (sql.includes("update agents set added_at = null")) { Object.assign(row!, { name: values[1], model: values[2], effort: values[3], cli_signed_in: "no", added_at: null, removing_at: null }); return { rows: [] }; }
-    if (sql.startsWith("update agents set model")) { Object.assign(row!, { model: values[1], effort: values[2], name: values[3] ?? row!.name }); return { rows: [] }; }
+    if (sql.startsWith("update agents set model")) { Object.assign(row!, { model: values[1] ?? row!.model, effort: values[2] ?? row!.effort, name: values[3] ?? row!.name }); return { rows: [] }; }
     if (sql.startsWith("select id, idx, generation, removing_at")) return { rows: row ? [{ cli_account: null, cli_plan: null, ...row }] : [] };
     if (sql.startsWith("select id, signed_in_at from claude_sign_in")) return { rows: this.shared ? [this.shared] : [] };
     if (sql.includes("as n")) return { rows: [{ n: 0 }] };
@@ -232,11 +232,11 @@ describe("agent slots", () => {
 
 const servers: Awaited<ReturnType<typeof buildServer>>["app"][] = [];
 afterEach(async () => { for (const app of servers.splice(0)) await app.close(); });
-async function httpFixture() {
+async function httpFixture({ signedIn = true } = {}) {
   const fixtureData = await fixture();
   const { slots, db, audit } = fixtureData;
   const computer = { releaseKill: vi.fn(async () => undefined), view: vi.fn(async () => ({ state: "stopped", sandboxes: [], lease: { holder: "paused", generation: 1, expiresAt: null }, attendedOpen: false, killedAt: null })) };
-  const { app } = await buildServer({ config, slots, db, audit, computer, consents: { view: async () => ({ provider: "anthropic", disclosureVersion: "test", state: "not_asked", required: false, allowed: true, changedAt: null, changedBy: null }) }, vault: { list: vi.fn() }, auth: { session: async () => ({ hash: "owner", freshUntil: new Date(Date.now() + 10000) }) },
+  const { app } = await buildServer({ config, slots, db, audit, computer, consents: { view: async () => ({ provider: "anthropic", disclosureVersion: "test", state: "not_asked", required: false, allowed: true, changedAt: null, changedBy: null }) }, vault: { list: vi.fn() }, auth: { session: async () => signedIn ? { hash: "owner", freshUntil: new Date(Date.now() + 10000) } : null },
     log: pino({ level: "silent" }), webRoot: "/missing" } as unknown as HttpDeps);
   servers.push(app);
   const headers = { host: config.appHost, origin: config.appOrigin };
@@ -314,6 +314,29 @@ describe("owner agent routes", () => {
   it("enforces trimmed name length", () => {
     expect(AgentSettingsRequest.parse({ name: " A ", model: config.defaultModel, effort: config.defaultEffort }).name).toBe("A");
     for (const name of ["   ", "x".repeat(41)]) expect(AgentSettingsRequest.safeParse({ name, model: config.defaultModel, effort: config.defaultEffort }).success).toBe(false);
+    expect(AgentSettingsRequest.parse({ name: " A " })).toEqual({ name: "A" });
+    expect(AgentSettingsRequest.safeParse({}).success).toBe(false);
+  });
+  it("renames with only a name and keeps the model and effort", async () => {
+    const { app, headers, row, audit } = await httpFixture();
+    Object.assign(row, { model: "claude-sonnet-5-5", effort: "high" });
+    const result = await app.inject({ method: "PUT", url: `/api/agents/${row.id}/settings`, headers, payload: { name: "  Invoices  " } });
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toMatchObject({ name: "Invoices", model: "claude-sonnet-5-5", effort: "high" });
+    expect(audit.append).toHaveBeenCalledWith(row.id, "owner", "agent.settings_changed", { name: "Invoices" });
+  });
+  it("refuses a settings change with no fields", async () => {
+    const { app, headers, row } = await httpFixture();
+    const result = await app.inject({ method: "PUT", url: `/api/agents/${row.id}/settings`, headers, payload: {} });
+    expect(result.statusCode).toBe(400);
+    expect(result.json().error.code).toBe("invalid_request");
+  });
+  it("refuses a rename without an owner session", async () => {
+    const { app, headers, row, db } = await httpFixture({ signedIn: false });
+    const result = await app.inject({ method: "PUT", url: `/api/agents/${row.id}/settings`, headers, payload: { name: "Invoices" } });
+    expect(result.statusCode).toBe(401);
+    expect(row.name).not.toBe("Invoices");
+    expect(db.calls.some(sql => sql.startsWith("update agents set model"))).toBe(false);
   });
 });
 
