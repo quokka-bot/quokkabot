@@ -16,7 +16,7 @@ import { ClaudeSignIns } from "../src/claude-sign-in.js";
 const ids = [1, 2, 3].map(index => `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`);
 const config = {
   ...ControlConfigFile.parse({
-    appOrigin: "https://quokkabot.test", viewOrigin: "https://view.quokkabot.test", ownerName: "Owner",
+    appOrigin: "https://quokkabot.test", viewOrigin: "https://view.quokkabot.test",
     dataRoot: "/data", secretsDir: "/secrets", database: { host: "db", port: 5432, name: "quokkabot", ownerUser: "owner", appUser: "app" },
     supervisorSocket: "/supervisor.sock", egressUrl: "http://egress:8080",
     agents: ids.map((agentId, offset) => ({ agentId, index: offset + 1, name: `Agent ${offset + 1}`,

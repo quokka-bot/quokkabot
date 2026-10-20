@@ -283,7 +283,6 @@ describe.skipIf(!enabled)("control plane end to end", () => {
       viewOrigin: `http://view.localhost:${appPort}`,
       appHost: `localhost:${appPort}`,
       viewHost: `view.localhost:${appPort}`,
-      ownerName: "Owner",
       appleAppIds: ["ABCDE12345.com.example.quokkabot"],
       dataRoot: "/data",
       secretsDir: "/run/secrets",
@@ -315,8 +314,8 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     await db.query("insert into sessions (hash, expires_at, fresh_until) values ($1, now() + interval '1 day', now() + interval '5 minutes')", [sha256Hex(sessionToken)]);
     passkey = new SoftPasskey("localhost", `http://localhost:${appPort}`);
     await passkey.register(db);
-    // The owner, as setup records it with the first passkey.
-    await db.query("insert into owner_account (id, name, webauthn_user_id) values (1, 'Owner', $1) on conflict do nothing", [randomBytes(32).toString("base64url")]);
+    // The owner, as setup records it with the first passkey: no name until the owner gives one.
+    await db.query("insert into owner_account (id, name, webauthn_user_id) values (1, null, $1) on conflict do nothing", [randomBytes(32).toString("base64url")]);
   }, 120_000);
 
   afterAll(async () => {
@@ -1417,6 +1416,50 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     return { token, id: sha256Hex(token).slice(0, 16) };
   }
   const bearer = (token: string): Record<string, string> => ({ authorization: `Bearer ${token}` });
+
+  it("keeps the owner's name, which only the owner's own sessions read and change", async () => {
+    const stored = async () => (await db.query<{ name: string | null }>("select name from owner_account where id = 1")).rows[0]!.name;
+    expect(await stored()).toBeNull();
+    expect((await api("GET", "/api/me")).body).toMatchObject({ ownerName: "" });
+    const saved = await api("PUT", "/api/me", { ownerName: "  Robin   Example " });
+    expect(saved).toMatchObject({ status: 200, body: { ownerName: "Robin Example", passkeys: 1 } });
+    expect(await stored()).toBe("Robin Example");
+    // Another device reads it, and the phone changes it with its token and no Origin.
+    const phone = await phoneSession();
+    expect((await api("GET", "/api/me", undefined, { cookie: false, origin: null, headers: bearer(phone.token) })).body.ownerName).toBe("Robin Example");
+    expect((await api("PUT", "/api/me", { ownerName: "Robin" }, { cookie: false, origin: null, headers: bearer(phone.token) })).body.ownerName).toBe("Robin");
+    // Without the owner's session, from another origin or host, or with an invalid name, nothing changes.
+    const refused = [
+      await api("PUT", "/api/me", { ownerName: "Mallory" }, { cookie: false }),
+      await api("PUT", "/api/me", { ownerName: "Mallory" }, { origin: null }),
+      await api("PUT", "/api/me", { ownerName: "Mallory" }, { origin: `http://view.localhost:${appPort}` }),
+      await api("PUT", "/api/me", { ownerName: "Mallory" }, { host: `view.localhost:${appPort}`, origin: `http://view.localhost:${appPort}` }),
+      await api("PUT", "/api/me", { ownerName: "Mallory" }, { cookie: false, origin: null, headers: bearer(secret()) }),
+      await api("PUT", "/api/me", { ownerName: "Mal\nlory" }),
+      await api("GET", "/api/me", undefined, { cookie: false }),
+    ];
+    expect(refused.map((response) => response.status)).toEqual([401, 403, 403, 404, 401, 400, 401]);
+    expect(JSON.stringify(refused.map((response) => response.body))).not.toContain("Robin");
+    expect(await stored()).toBe("Robin");
+    // The name never reaches the audit log.
+    expect(JSON.stringify((await db.query("select data from audit_events")).rows)).not.toContain("Robin");
+  });
+
+  it("labels a setup passkey with the server's host and keeps the owner's name and account through a later setup link", async () => {
+    const before = (await db.query<{ name: string | null; webauthn_user_id: string }>("select name, webauthn_user_id from owner_account where id = 1")).rows[0]!;
+    expect(before.name).not.toBeNull();
+    const operator = new Auth(db, controlConfig, new AuditLog(db, controlConfig.secrets.auditHmacKey), () => [AGENT]);
+    const ticket = new URL(await operator.createSetupLink()).hash.slice(1);
+    const options = await api("POST", "/api/setup/options", { ticket }, { cookie: false });
+    expect(options.status).toBe(200);
+    expect(options.body.user).toMatchObject({ name: "localhost", id: before.webauthn_user_id });
+    const challenge = /qb_challenge=([^;]+)/.exec(options.setCookie.join(";"))?.[1];
+    const device = new SoftPasskey("localhost", `http://localhost:${appPort}`);
+    const verified = await api("POST", "/api/setup/verify", { ticket, response: device.attest(options.body) }, { cookie: false, extraCookie: `qb_challenge=${challenge}` });
+    expect(verified).toMatchObject({ status: 200, body: { ownerName: before.name } });
+    expect((await db.query("select name, webauthn_user_id from owner_account where id = 1")).rows[0]).toEqual(before);
+    await db.query("delete from passkeys where id = $1", [device.id]);
+  });
 
   it("accepts a phone's bearer token without an Origin and only that way", async () => {
     const phone = await phoneSession();

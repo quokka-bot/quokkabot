@@ -371,7 +371,7 @@ it("keeps the setup ticket in POST bodies and removes its fragment", async () =>
   window.history.replaceState(null, "", `/setup#${ticket}`);
   vi.mocked(startRegistration).mockResolvedValue({ id: "registration" } as Awaited<ReturnType<typeof startRegistration>>);
   handler = path => {
-    if (path === "/api/setup/options") return json({ challenge: "abc", rp: { name: "Quokka Bot" }, user: { id: "abc", name: "Owner", displayName: "Owner" }, pubKeyCredParams: [{ alg: -7, type: "public-key" }] });
+    if (path === "/api/setup/options") return json({ challenge: "abc", rp: { name: "Quokka Bot" }, user: { id: "abc", name: "quokkabot.test", displayName: "" }, pubKeyCredParams: [{ alg: -7, type: "public-key" }] });
     if (path === "/api/setup/verify") return json(me);
     return undefined;
   };
@@ -428,6 +428,70 @@ it("opens owner settings from the sidebar", async () => {
   fireEvent.click(screen.getByRole("link", { name: "Settings" }));
   expect(await screen.findByRole("heading", { name: "Signed-in devices" })).toBeTruthy();
   expect(screen.getByLabelText("App route").textContent).toBe("/settings");
+});
+
+it("asks a new owner's name after the passkey and shows its initial", async () => {
+  const ticket = "s".repeat(40);
+  window.history.replaceState(null, "", `/setup#${ticket}`);
+  vi.mocked(startRegistration).mockResolvedValue({ id: "registration" } as Awaited<ReturnType<typeof startRegistration>>);
+  let ownerName = "";
+  handler = (path, init) => {
+    if (path === "/api/setup/options") return json({ challenge: "abc", rp: { name: "Quokka Bot" }, user: { id: "abc", name: "quokkabot.test", displayName: "" }, pubKeyCredParams: [{ alg: -7, type: "public-key" }] });
+    if (path === "/api/setup/verify") return json({ ...me, ownerName });
+    if (path === "/api/me" && init?.method === "PUT") { ownerName = (JSON.parse(String(init.body)) as { ownerName: string }).ownerName; return json({ ...me, ownerName }); }
+    if (path === "/api/me") return json({ ...me, ownerName });
+    return undefined;
+  };
+  renderApp("/setup");
+  fireEvent.click(screen.getByRole("button", { name: "Create passkey" }));
+  expect(await screen.findByRole("heading", { name: "What is your name?" })).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Your name"), { target: { value: "   " } });
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  expect(await screen.findByText("Enter your name.")).toBeTruthy();
+  expect(fetchMock.mock.calls.some(([url, init]) => url === "/api/me" && init?.method === "PUT")).toBe(false);
+  fireEvent.change(screen.getByLabelText("Your name"), { target: { value: "  ąžuolas   Example " } });
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  await screen.findByRole("textbox", { name: "Message" });
+  expect(requestBody("/api/me", "PUT")).toEqual({ ownerName: "ąžuolas Example" });
+  expect(screen.getByRole("link", { name: "Settings" }).textContent).toBe("Ą");
+  expect(screen.getByLabelText("App route").textContent).toBe(`/agents/${agentId}`);
+});
+
+it("shows a person outline on the avatar until the owner gives a name, then the initial after saving it in Settings", async () => {
+  let ownerName = "";
+  handler = (path, init) => {
+    if (path === "/api/me" && init?.method === "PUT") { ownerName = (JSON.parse(String(init.body)) as { ownerName: string }).ownerName; return json({ ...me, ownerName }); }
+    if (path === "/api/me") return json({ ...me, ownerName });
+    return undefined;
+  };
+  renderApp("/settings");
+  const avatar = await screen.findByRole("link", { name: "Settings" });
+  await waitFor(() => expect(within(avatar).getByTestId("owner-avatar-no-name")).toBeTruthy());
+  expect(avatar.textContent).toBe("");
+  const form = await screen.findByRole("form", { name: "Your name" });
+  const input = within(form).getByRole("textbox", { name: "Your name" });
+  expect((input as HTMLInputElement).value).toBe("");
+  fireEvent.change(input, { target: { value: "👩‍💻 Kim" } });
+  fireEvent.click(within(form).getByRole("button", { name: "Save name" }));
+  expect(await within(form).findByText("Name saved.")).toBeTruthy();
+  expect(requestBody("/api/me", "PUT")).toEqual({ ownerName: "👩‍💻 Kim" });
+  expect(screen.getByRole("link", { name: "Settings" }).textContent).toBe("👩‍💻");
+});
+
+it("shows the server's refusal of a name beside the field", async () => {
+  handler = (path, init) => {
+    if (path === "/api/me" && init?.method === "PUT") return json({ error: { code: "not_set_up", message: "This server has no owner yet. Use the setup link from the server." } }, 409);
+    return undefined;
+  };
+  renderApp("/settings");
+  const form = await screen.findByRole("form", { name: "Your name" });
+  const input = within(form).getByRole("textbox", { name: "Your name" });
+  expect((input as HTMLInputElement).value).toBe("Ada");
+  fireEvent.change(input, { target: { value: "Robin" } });
+  fireEvent.click(within(form).getByRole("button", { name: "Save name" }));
+  expect(await within(form).findByText("This server has no owner yet. Use the setup link from the server.")).toBeTruthy();
+  expect((input as HTMLInputElement).value).toBe("Robin");
+  expect(screen.getByRole("link", { name: "Settings" }).textContent).toBe("A");
 });
 
 it("refuses a workspace path outside its root before fetching", () => {

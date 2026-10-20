@@ -337,6 +337,7 @@ summary { min-height: 34px; cursor: pointer; font-size: 13px; font-weight: 500; 
 .auth-note { margin: 0 0 8px; color: var(--muted); }
 .auth-card .error { text-align: center; }
 .auth-card .desktop-flow { width: 100%; }
+.auth-form { display: flex; flex-direction: column; gap: 12px; width: 100%; text-align: left; }
 .phone-qr { display: block; width: 180px; height: 180px; margin: 4px 0 12px; }
 .link-code { margin: 8px 0; padding: 14px; width: 100%; border-radius: 14px; background: var(--sidebar); font: 600 clamp(22px, 6vw, 32px) ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .1em; text-align: center; overflow-wrap: anywhere; }
 .desktop-flow { margin: 10px 0; padding: 14px; border-radius: 14px; background: var(--sidebar); }

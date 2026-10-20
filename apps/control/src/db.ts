@@ -1,5 +1,5 @@
 import pg from "pg";
-import { REACTION_EMOJIS } from "@quokkabot/shared";
+import { OwnerName, REACTION_EMOJIS } from "@quokkabot/shared";
 import { sitePatterns } from "@quokkabot/shared/node";
 import type { ControlConfig } from "./config.js";
 
@@ -64,6 +64,13 @@ export async function maybeOne<T extends pg.QueryResultRow>(
 export async function many<T extends pg.QueryResultRow>(q: Db | Tx, text: string, values: unknown[] = []): Promise<T[]> {
   const result = await q.query<T>(text, values);
   return result.rows;
+}
+
+// The owner's name a server keeps from before the owner could give one (migration 22). Every installer wrote the
+// placeholder 'Owner', so it becomes null; any other stored name stays when it is a valid name.
+export function migratedOwnerName(stored: string): string | null {
+  const parsed = OwnerName.safeParse(stored);
+  return stored === "Owner" || !parsed.success ? null : parsed.data;
 }
 
 // Schema migrations, applied in order by the owner role. Each runs once in its own transaction: its SQL, then its
@@ -606,6 +613,16 @@ const MIGRATIONS: Migration[] = [
       );
       grant select, insert, update, delete on claude_sign_in to ${appUser};
     `,
+  },
+  {
+    id: 22,
+    // The owner's name is the owner's to give, at setup or in Settings, and null until then.
+    data: async (tx) => {
+      await tx.query("alter table owner_account alter column name drop not null");
+      await tx.query("alter table owner_account add constraint owner_account_name_check check (name <> '')");
+      const row = await maybeOne<{ name: string }>(tx, "select name from owner_account where id = 1");
+      if (row) await tx.query("update owner_account set name = $1 where id = 1", [migratedOwnerName(row.name)]);
+    },
   },
 ];
 

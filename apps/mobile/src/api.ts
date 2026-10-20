@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
   AgentSettingsRequest, AgentSummary, AgentsResponse, AiConsentRequest, AiConsentView, ApiError, AttendedRequest, ComputerView, ControlLease, CreateTaskRequest, DecideDomainRequest, DomainsView, EmptyResponse,
-  InboxResponse, LoginView, Me, ReactionRequest, type ReactionEmoji, ReplyRequest, SaveLoginRequest, ScreenSize, SessionView,
+  InboxResponse, LoginView, Me, OwnerNameRequest, ReactionRequest, type ReactionEmoji, ReplyRequest, SaveLoginRequest, ScreenSize, SessionView,
   TakeoverDoneRequest, TakeoverFillRequest, TakeoverFillResponse, TakeoverFocusResponse, TakeoverRequest, TakeoverScreenRequest, Task, TaskDetail,
   TaskPage, UpdateLoginRequest, ViewTicketResponse,
 } from "@quokkabot/shared";
@@ -80,6 +80,7 @@ export function createApi(fetchImpl: Fetch, origin: string, token: string, onSig
   return {
     origin,
     me: () => request("/me", Me),
+    setOwnerName: (ownerName: string) => request("/me", Me, "PUT", OwnerNameRequest.parse({ ownerName })),
     logout: () => request("/auth/logout", EmptyResponse, "POST", {}),
     sessions: () => request("/sessions", z.object({ sessions: z.array(SessionView) })),
     agents: async () => {

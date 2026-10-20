@@ -3,7 +3,7 @@ import {
   AiConsentRequest, AiConsentView, Attachment, ClaudeSignInCode, ClaudeSignInStart, ClaudeSignInView, AddDomainRuleRequest, AgentSettingsRequest, AgentSummary, AgentsResponse, CreateAgentRequest, ApiError, AttendedRequest,
   AuditPage, AuditVerification, EmptyResponse, FreshAuth, TaskPage, WebAuthnAuthenticationOptions, WebAuthnRegistrationOptions, AuthVerifyRequest, ComputerView, ControlLease, CreateTaskRequest,
   DecideDomainRequest, DomainRuleView, DomainsView, SafeFileListing, InboxResponse, Me,
-  RelPath, ReplyRequest, ReactionRequest, type ReactionEmoji, SetupOptionsRequest, SetupVerifyRequest, TakeoverDoneRequest,
+  RelPath, ReplyRequest, ReactionRequest, type ReactionEmoji, OwnerNameRequest, SetupOptionsRequest, SetupVerifyRequest, TakeoverDoneRequest,
   TakeoverRequest, Task, TaskDetail, TerminalClientFrame, TerminalServerFrame,
   ViewTicketResponse, DesktopLinkPending, DesktopLinkDecideRequest, DesktopLinkApproveVerifyRequest,
   SessionView, LoginView, SaveLoginRequest, UpdateLoginRequest, ConnectorsResponse, ConnectStartResponse } from "@quokkabot/shared";
@@ -96,6 +96,7 @@ export const api = {
   signOutClaude: () => request("/claude-sign-in", ClaudeSignInView, "DELETE"),
   cancelClaudeSignIn: (id: string) => request(`/claude-sign-in/${encodeURIComponent(id)}`, EmptyResponse, "DELETE"),
   me: () => request("/me", Me),
+  setOwnerName: (ownerName: string) => request("/me", Me, "PUT", OwnerNameRequest.parse({ ownerName })),
   setupOptions: async (ticket: string) => await request("/setup/options", WebAuthnRegistrationOptions, "POST", SetupOptionsRequest.parse({ ticket })) as PublicKeyCredentialCreationOptionsJSON,
   setupVerify: (ticket: string, response: unknown) => request("/setup/verify", Me, "POST", SetupVerifyRequest.parse({ ticket, response })),
   authOptions: async (fresh = false) => await request(fresh ? "/auth/fresh/options" : "/auth/options", WebAuthnAuthenticationOptions, "POST", {}) as PublicKeyCredentialRequestOptionsJSON,

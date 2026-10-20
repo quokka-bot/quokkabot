@@ -84,7 +84,7 @@ describe("agent generation headers", () => {
   });
 
   it("does not attach an agent generation to unrelated paths", async () => {
-    fetchMock.mockResolvedValueOnce(json(agent)).mockResolvedValueOnce(json({ ownerName: "Owner", passkeys: 1, freshUntil: null }));
+    fetchMock.mockResolvedValueOnce(json(agent)).mockResolvedValueOnce(json({ ownerName: "Ada", passkeys: 1, freshUntil: null }));
     await api.agent(agent.id);
     await api.me();
     expect(sentHeader(1)).toBeNull();

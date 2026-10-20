@@ -5,6 +5,7 @@ import { api } from "./api.js";
 import { ErrorLine, useAction } from "./ui.js";
 import { useDesktopFlow } from "./desktop.js";
 import { AgentAvatar } from "./avatar.js";
+import { SetupOwnerName } from "./owner.js";
 
 export async function freshPasskey(): Promise<void> {
   const optionsJSON = await api.authOptions(true);
@@ -49,15 +50,24 @@ export function Setup() {
   const navigate = useNavigate();
   // Capture once, then remove the ticket before fetching or navigating. It is only sent in POST bodies.
   const [ticket] = useState(() => window.location.hash.slice(1));
+  const [askName, setAskName] = useState(false);
   useEffect(() => {
     window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}`);
   }, []);
   const setup = useAction(async () => {
     const optionsJSON = await api.setupOptions(ticket);
     const response = await startRegistration({ optionsJSON });
-    await api.setupVerify(ticket, response);
-    void navigate("/", { replace: true });
+    const me = await api.setupVerify(ticket, response);
+    // A later setup link (a passkey on a new device) keeps the name the owner already gave.
+    if (me.ownerName === "") setAskName(true);
+    else void navigate("/", { replace: true });
   });
+  if (askName) return <div className="auth-card">
+    <AgentAvatar index={0} size={64} />
+    <h1>What is your name?</h1>
+    <p className="auth-note">It shows on your avatar in the Quokka Bot apps. You can change it in Settings.</p>
+    <SetupOwnerName onSaved={() => void navigate("/", { replace: true })} />
+  </div>;
   return <div className="auth-card">
     <AgentAvatar index={0} size={64} />
     <h1>Make this Quokka Bot yours</h1>
