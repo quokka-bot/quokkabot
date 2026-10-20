@@ -307,15 +307,16 @@ describe("settings and native navigation", () => {
   it("shows a downloaded app update in the sidebar and restarts into it", async () => {
     const desktop = bridge(); mount();
     const notice = await screen.findByRole("status", { name: "App update" });
+    const restart = await within(notice).findByRole("button", { name: "Restart to update" });
     expect(notice.textContent).toContain("Quokka Bot 1.2.4 is ready.");
-    fireEvent.click(within(notice).getByRole("button", { name: "Restart to update" }));
+    fireEvent.click(restart);
     await waitFor(() => expect(desktop.installUpdate).toHaveBeenCalledOnce());
   });
 
   it("shows the restart error in the sidebar notice", async () => {
     const desktop = bridge(); desktop.installUpdate.mockRejectedValue(new Error("No downloaded update is ready to install."));
     mount();
-    fireEvent.click(within(await screen.findByRole("status", { name: "App update" })).getByRole("button", { name: "Restart to update" }));
+    fireEvent.click(await within(await screen.findByRole("status", { name: "App update" })).findByRole("button", { name: "Restart to update" }));
     expect((await screen.findByRole("alert")).textContent).toContain("No downloaded update is ready to install.");
   });
 
@@ -323,7 +324,18 @@ describe("settings and native navigation", () => {
     const desktop = bridge(); desktop.getUpdateStatus.mockResolvedValue({ state, version: null, message: null });
     mount(); await screen.findByRole("navigation", { name: "Agents" });
     await waitFor(() => expect(desktop.getUpdateStatus).toHaveBeenCalled());
-    expect(screen.queryByRole("status", { name: "App update" })).toBeNull();
+    expect(screen.getByRole("status", { name: "App update" }).textContent).toBe("");
+  });
+
+  it("keeps the status region mounted and fills it when the update is ready", async () => {
+    const desktop = bridge(); desktop.getUpdateStatus.mockResolvedValue({ state: "downloading", version: "1.2.4", message: null });
+    mount(); await waitFor(() => expect(desktop.getUpdateStatus).toHaveBeenCalled());
+    const region = screen.getByRole("status", { name: "App update" });
+    expect(region.textContent).toBe("");
+    desktop.getUpdateStatus.mockResolvedValue({ state: "ready", version: "1.2.4", message: null });
+    await act(async () => { await clients[0]?.refetchQueries({ queryKey: ["desktop-update"] }); });
+    await waitFor(() => expect(region.textContent).toContain("Quokka Bot 1.2.4 is ready."));
+    expect(screen.getByRole("status", { name: "App update" })).toBe(region);
   });
 
   it("shows no app update notice in a browser", async () => {

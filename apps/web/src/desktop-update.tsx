@@ -13,10 +13,13 @@ function ReadyUpdate({ bridge }: { bridge: QuokkaBotDesktopBridge }) {
   // The same query as the desktop settings card, so both show one status.
   const update = useQuery({ queryKey: ["desktop-update"], queryFn: () => bridge.getUpdateStatus(), refetchInterval: interval });
   const restart = useAction(() => bridge.installUpdate());
-  if (update.data?.state !== "ready") return null;
-  return <div className="desktop-update" role="status" aria-label="App update">
-    <span>{update.data.version ? `Quokka Bot ${update.data.version} is ready.` : "A Quokka Bot update is ready."}</span>
-    <button type="button" className="primary" disabled={restart.isPending} onClick={() => restart.mutate()}>Restart to update</button>
-    <ErrorLine error={restart.error} />
+  const ready = update.data?.state === "ready" ? update.data : null;
+  // The status region stays mounted while empty, so a screen reader announces the notice when it appears.
+  return <div role="status" aria-label="App update">
+    {ready && <div className="desktop-update">
+      <span>{ready.version ? `Quokka Bot ${ready.version} is ready.` : "A Quokka Bot update is ready."}</span>
+      <button type="button" className="primary" disabled={restart.isPending} onClick={() => restart.mutate()}>Restart to update</button>
+      <ErrorLine error={restart.error} />
+    </div>}
   </div>;
 }
