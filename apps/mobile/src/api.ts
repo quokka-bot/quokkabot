@@ -1,8 +1,8 @@
 import { z } from "zod";
 import {
   AgentSummary, AgentsResponse, ApiError, AttendedRequest, ComputerView, ControlLease, CreateTaskRequest, DecideDomainRequest, DomainsView, EmptyResponse,
-  InboxResponse, LoginView, Me, ReactionRequest, type ReactionEmoji, ReplyRequest, SaveLoginRequest, SessionView,
-  TakeoverDoneRequest, TakeoverFillRequest, TakeoverFillResponse, TakeoverFocusResponse, TakeoverRequest, Task, TaskDetail,
+  InboxResponse, LoginView, Me, ReactionRequest, type ReactionEmoji, ReplyRequest, SaveLoginRequest, ScreenSize, SessionView,
+  TakeoverDoneRequest, TakeoverFillRequest, TakeoverFillResponse, TakeoverFocusResponse, TakeoverRequest, TakeoverScreenRequest, Task, TaskDetail,
   TaskPage, UpdateLoginRequest, ViewTicketResponse,
 } from "@quokkabot/shared";
 
@@ -107,6 +107,8 @@ export function createApi(fetchImpl: Fetch, origin: string, token: string, onSig
     // typing the phone's native field into it.
     takeoverFocus: (id: string) => request(`${agentPath(id)}/takeover/focus`, TakeoverFocusResponse),
     takeoverFill: (id: string, input: z.input<typeof TakeoverFillRequest>) => request(`${agentPath(id)}/takeover/fill`, TakeoverFillResponse, "POST", TakeoverFillRequest.parse(input)),
+    // During the owner's takeover: fits the computer's screen to the live view. Handing back puts the desktop size back.
+    takeoverScreen: (id: string, size: ScreenSize) => request(`${agentPath(id)}/takeover/screen`, ScreenSize, "PUT", TakeoverScreenRequest.parse(size)),
     // The live view's one-time URL on the server's viewer origin; the phone opens nothing else in its viewer.
     viewTicket: async (id: string, viewOrigin: string) => {
       const ticket = await request(`${agentPath(id)}/view-ticket`, ViewTicketResponse, "POST", {});

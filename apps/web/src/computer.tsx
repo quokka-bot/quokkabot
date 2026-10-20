@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { AgentSummary, ComputerView } from "@quokkabot/shared";
 import { api } from "./api.js";
@@ -46,6 +46,13 @@ export function Computer({ agent }: { agent: AgentSummary }) {
   const computer = agent.computer;
   const killed = computer.state === "killed";
   const holder = agent.computer.lease.holder;
+  // A phone may fit the screen to itself while the owner has control; when control leaves the owner the desktop size
+  // comes back, and the live view streams the size it had when it connected, so it reconnects.
+  const ownerHeld = useRef(holder === "owner");
+  useEffect(() => {
+    if (ownerHeld.current && holder !== "owner") setViewerRevision(value => value + 1);
+    ownerHeld.current = holder === "owner";
+  }, [holder]);
   const leaseLabel = holder === "owner" ? "You have control" : holder === "agent" ? "Agent is driving" : "Paused";
   return <>
     <div className="section-heading"><h2>Computer</h2><Status value={agent.computer.state} /></div>

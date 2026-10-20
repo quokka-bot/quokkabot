@@ -8,6 +8,8 @@ import {
   type SecretFillRequest,
   type OwnerFillRequest,
   OwnerFocusResult,
+  ScreenSize,
+  type ScreenRequest,
   ComputerStatus,
   type ControlLease,
   DownloadInfo,
@@ -314,6 +316,10 @@ export class BrowserServiceClient {
   }
   commandResult(commandId: string): Promise<BrowserCommandResult> {
     return jsonCall(this.base(), this.token, "GET", `/v1/commands/${commandId}`, undefined, BrowserCommandResult, 10_000);
+  }
+  // Fits the screen to the owner's phone; the browser service refuses it unless that lease is the owner's.
+  setScreen(request: ScreenRequest): Promise<ScreenSize> {
+    return jsonCall(this.base(), this.token, "PUT", "/v1/screen", request, ScreenSize, 30_000);
   }
   setLease(lease: ControlLease): Promise<unknown> {
     return jsonCall(this.base(), this.token, "PUT", "/v1/control-lease", lease, z.unknown(), 30_000);

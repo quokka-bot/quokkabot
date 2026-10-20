@@ -49,6 +49,11 @@ FROM lscr.io/linuxserver/webtop:debian-xfce@sha256:d925f9c84663fe57735be4defe95a
 # The viewer origin Selkies accepts WebSocket connections from comes at container creation from the supervisor
 # (SELKIES_ALLOWED_ORIGINS); the startup check refuses to start without it.
 
+# The screen size belongs to the browser service, never to a viewer: Selkies keeps every viewer's own size and DPI
+# out (ENABLE_RESIZE, MANUAL_RESOLUTION locked off, SCALING_DPI set here), and streams whatever size the X screen
+# has when a viewer connects. The browser service sets 1280x800 before Chrome starts, fits it to the owner's phone
+# during a takeover and puts 1280x800 back when the takeover ends (QUOKKABOT_SCREEN_RESIZE).
+
 # Debian's chromium (crashes under gVisor) and sudo go. The desktop user loses the sudo and docker groups. No
 # autostart entries: the session runs only what xfce4-session.xml lists.
 # sudo's pre-removal script refuses to run without SUDO_FORCE_REMOVE=yes when root has no password.
@@ -115,5 +120,7 @@ ENV QUOKKABOT_CHROME=/opt/pw-browsers/chrome \
     SELKIES_GAMEPAD_ENABLED=false \
     SELKIES_UI_SIDEBAR_SHOW_FILES=false \
     SELKIES_UI_SIDEBAR_SHOW_APPS=false \
-    SELKIES_MANUAL_WIDTH=1280 \
-    SELKIES_MANUAL_HEIGHT=800
+    SELKIES_ENABLE_RESIZE=false \
+    SELKIES_MANUAL_RESOLUTION="false|locked" \
+    SELKIES_SCALING_DPI=96 \
+    QUOKKABOT_SCREEN_RESIZE=/lsiopy/bin/selkies-resize

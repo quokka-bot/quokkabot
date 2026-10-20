@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AttachmentIds } from "./attachments.js";
 import { AuditEvent } from "./audit.js";
-import { ControlLease, OwnerFillRequest, OwnerFocusResult } from "./browser.js";
+import { ControlLease, OwnerFillRequest, OwnerFocusResult, ScreenSize } from "./browser.js";
 import { EgressDecision } from "./egress.js";
 import {
   AgentId,
@@ -121,6 +121,7 @@ export type AgentsResponse = z.infer<typeof AgentsResponse>;
 // POST /api/agents/:agentId/takeover  { action }     -> ControlLease
 // GET  /api/agents/:agentId/takeover/focus           -> TakeoverFocusResponse
 // POST /api/agents/:agentId/takeover/fill            -> TakeoverFillResponse
+// PUT  /api/agents/:agentId/takeover/screen { width, height } -> ScreenSize (fits the screen to a phone)
 // POST /api/agents/:agentId/attended  { open }       -> ComputerView
 // POST /api/agents/:agentId/view-ticket              -> { url }  (one-time URL on the viewer origin)
 // GET  /api/agents/:agentId/terminal (WebSocket)     needs fresh auth; frames are TerminalClientFrame/ServerFrame
@@ -134,6 +135,8 @@ export const TakeoverFillRequest = OwnerFillRequest.omit({ commandId: true, leas
 export type TakeoverFillRequest = z.infer<typeof TakeoverFillRequest>;
 export const TakeoverFillResponse = z.object({ ok: z.literal(true) }).strict();
 export type TakeoverFillResponse = z.infer<typeof TakeoverFillResponse>;
+// The phone's live view size, in points. Only the owner's current takeover may change the screen.
+export const TakeoverScreenRequest = ScreenSize;
 export const AttendedRequest = z.object({ open: z.boolean() }).strict();
 export const ViewTicketResponse = z.object({ url: z.string() });
 

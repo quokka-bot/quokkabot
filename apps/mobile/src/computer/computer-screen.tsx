@@ -4,9 +4,10 @@ import { router, useIsFocused } from "expo-router";
 import { Alert, AppState, KeyboardAvoidingView, Pressable, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import type { AgentSummary, TakeoverFocusResponse } from "@quokkabot/shared";
+import type { AgentSummary, ScreenSize, TakeoverFocusResponse } from "@quokkabot/shared";
 import { useSignedIn } from "../session";
 import { askedTakeover, handBack, setAttended } from "./actions";
+import { needsRefit, screenFor } from "./screen-fit";
 import { Viewer } from "./viewer";
 
 type Field = NonNullable<TakeoverFocusResponse["field"]>;
@@ -14,7 +15,9 @@ type Field = NonNullable<TakeoverFocusResponse["field"]>;
 // The agent's computer, full screen. "Take over" gives the owner the mouse and keyboard on the server; leaving this
 // screen closes the live view, and a takeover nobody watches pauses the agent after 30 seconds. While the owner has
 // control, a password or code field they tap on the computer can be typed here, in a native field where iOS offers
-// saved passwords and SMS codes; the value goes into that field only, never through the agent.
+// saved passwords and SMS codes; the value goes into that field only, never through the agent. While the owner has
+// control, the computer's screen takes the live view's size, so pages show at the phone's own width and text size;
+// handing back puts the desktop size back for the agent.
 export function ComputerScreen({ agentId }: { agentId: string }) {
   const { api, connection } = useSignedIn();
   const client = useQueryClient();
@@ -45,6 +48,27 @@ export function ComputerScreen({ agentId }: { agentId: string }) {
   // A takeover the agent asked for ends with "I'm done", which tells the agent; one the owner started hands back.
   const asked = inbox.data ? askedTakeover(inbox.data, agentId) !== null : false;
   const attendedOpen = data?.computer.attendedOpen ?? false;
+  const [view, setView] = useState<{ width: number; height: number } | null>(null);
+  const [fitted, setFitted] = useState<ScreenSize | null>(null);
+  // The live view streams the screen at the size it had when the view connected, so every resize reconnects it.
+  // The wait lets a turn of the phone finish laying out before the screen follows.
+  useEffect(() => {
+    if (!running || !active || holder !== "owner" || view === null) return;
+    const next = screenFor(view);
+    if (!needsRefit(fitted, next)) return;
+    const timer = setTimeout(() => void run(async () => {
+      setFitted(await api.takeoverScreen(agentId, next));
+      setRevision((value) => value + 1);
+    }), 400);
+    return () => clearTimeout(timer);
+  }, [running, active, holder, view, fitted]);
+  // Control left the owner (handed back here or elsewhere, or the takeover ran out): the server put the desktop size
+  // back, so the view reconnects to show it.
+  useEffect(() => {
+    if (holder === "owner" || fitted === null) return;
+    setFitted(null);
+    setRevision((value) => value + 1);
+  }, [holder, fitted]);
   const stopEverything = () => Alert.alert("Stop everything?", "Closes this agent's network and stops its computer. Starting it again needs your passkey in the web app.", [
     { text: "Cancel", style: "cancel" },
     { text: "Stop everything", style: "destructive", onPress: () => void run(() => api.kill(agentId)) },
@@ -58,7 +82,7 @@ export function ComputerScreen({ agentId }: { agentId: string }) {
       <Text style={styles.status} accessibilityLiveRegion="polite" numberOfLines={1}>{status}</Text>
       <Pressable accessibilityRole="button" accessibilityLabel="Stop everything" onPress={stopEverything} hitSlop={12} disabled={busy || killed}><Text style={[styles.barButton, styles.stop]}>Stop</Text></Pressable>
     </View>
-    <View style={styles.viewer}>
+    <View style={styles.viewer} onLayout={(event) => setView({ width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height })}>
       {running && active ? <Viewer key={`${agentId}:${revision}`} agentId={agentId} revision={revision} />
         : <View style={styles.center}>
           <Text style={styles.centerText}>{killed ? "Release the kill switch in the web app, with your passkey." : running ? "" : "The live view opens when the computer runs."}</Text>

@@ -36,6 +36,7 @@ import {
   TakeoverDoneRequest,
   TakeoverRequest,
   TakeoverFillRequest,
+  TakeoverScreenRequest,
   TerminalClientFrame,
 } from "@quokkabot/shared";
 import cookie from "@fastify/cookie";
@@ -750,6 +751,27 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
     }
     await audit.append(agentId, "owner", "owner.filled_field", { kind: body.kind, site: new URL(result.url!).hostname });
     return { ok: true };
+  });
+  // The phone fits the computer's screen to its live view while the owner has control. The browser service checks the
+  // lease again and puts the desktop size back when control leaves the owner.
+  app.put<{ Params: { agentId: string } }>("/api/agents/:agentId/takeover/screen", appRoute, async (request) => {
+    await requireSession(request);
+    const agentId = await agentParam(request.params.agentId);
+    const lease = await ownerLease(agentId);
+    const body = parse(TakeoverScreenRequest, request.body);
+    let size;
+    try { size = await handles(agentId).browser.setScreen({ ...body, leaseGeneration: lease.generation }); }
+    catch (error) {
+      // The browser service answers 409 for any failure; only "no takeover" means the lease was refused.
+      let refused = false;
+      if (error instanceof UpstreamError && error.status === 409) {
+        try { refused = JSON.parse(error.body).message === "no takeover"; } catch { /* An invalid reply is a failure. */ }
+      }
+      if (refused) throw new HttpError(409, "no_takeover", "Take over the computer first.");
+      throw new HttpError(502, "screen_failed", "Could not fit the screen to this phone. Refresh the view.");
+    }
+    await audit.append(agentId, "owner", "takeover.screen", { width: size.width, height: size.height, generation: lease.generation });
+    return size;
   });
   app.post<{ Params: { agentId: string } }>("/api/agents/:agentId/attended", appRoute, async (request) => {
     await requireSession(request);

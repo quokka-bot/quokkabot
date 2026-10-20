@@ -80,7 +80,9 @@ executes it. There is no eval, cookie, storage, raw DevTools, upload or clipboar
   its 12-hour viewer cookie runs out.
 - **Live view.** Selkies runs in secure mode; control holds its master token. The owner watches on a separate viewer
   origin. The agent holds the input lock by default; "Take over" moves it to the owner on the server, and an expired or
-  disconnected takeover pauses the agent instead of handing control back.
+  disconnected takeover pauses the agent instead of handing control back. The screen is 1280x800 for the agent; during
+  the owner's takeover the iPhone app fits it to its live view (at least 504 wide, Chrome's narrowest window), and
+  every lease that leaves the owner puts 1280x800 back. Viewers never resize it themselves.
 - **Kill switch.** One request freezes the agent's egress, stops all three sandboxes and revokes its tokens; it works
   without the database or the job queue on the headerless emergency path. Web requests carrying an occupant generation
   first take the slot lock and check the database. Nothing restarts until the owner confirms with a passkey.
