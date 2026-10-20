@@ -197,6 +197,31 @@ describe("agent lifecycle UI", () => {
     expect(JSON.parse(String(request?.[1]?.body))).not.toHaveProperty("look");
     await waitFor(() => expect(avatarOf("Renamed")?.dataset).toMatchObject({ shape: "blob", colour: "violet" }));
   });
+  it("stops moving and stops saying working once the task ends", async () => {
+    agents = [{ ...agent, activeTaskId: taskId as AgentSummary["activeTaskId"] }];
+    open(`/agents/${agentId}/settings`);
+    const row = await within(await screen.findByRole("navigation", { name: "Agents" })).findByRole("link", { name: /Office/ });
+    expect(row.querySelector("svg.agent-avatar")?.getAttribute("data-state")).toBe("working");
+    expect(row.querySelector("strong")?.textContent).toBe("Office, working");
+    agents = [{ ...agent, activeTaskId: null }];
+    await client.invalidateQueries();
+    await waitFor(() => expect(row.querySelector("svg.agent-avatar")?.getAttribute("data-state")).toBe("idle"));
+    expect(row.querySelector("strong")?.textContent).toBe("Office");
+  });
+  it("sends no look from an untouched picker after another app changed it", async () => {
+    open(`/agents/${agentId}/settings`);
+    const shapes = await screen.findByRole("group", { name: "Shape" });
+    expect((within(shapes).getByRole("radio", { name: "Blob" }) as HTMLInputElement).checked).toBe(true);
+    const current = agents[0];
+    if (!current) throw new Error("No agent");
+    current.look = { shape: "cloud", colour: "grey" };
+    await client.invalidateQueries();
+    await waitFor(() => expect((within(shapes).getByRole("radio", { name: "Cloud" }) as HTMLInputElement).checked).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await screen.findByText("Settings saved.");
+    const request = fetchMock.mock.calls.find(([url, init]) => url === `/api/agents/${agentId}/settings` && init?.method === "PUT");
+    expect(JSON.parse(String(request?.[1]?.body))).not.toHaveProperty("look");
+  });
   it("saves the shape and colour the owner picks and draws the agent with them", async () => {
     open(`/agents/${agentId}/settings`);
     const shapes = await screen.findByRole("group", { name: "Shape" });

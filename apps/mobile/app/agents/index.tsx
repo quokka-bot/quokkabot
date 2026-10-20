@@ -25,7 +25,7 @@ export default function Agents() {
 
 function AgentRow({ agent, waiting }: { agent: AgentSummary; waiting: number }) {
   const computer = agent.computer.state === "running" ? "Computer on" : "Computer off";
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${agent.name}${waiting > 0 ? `, ${waiting} waiting for you` : ""}`}
+  return <Pressable accessibilityRole="button" accessibilityLabel={`${agent.name}${agent.activeTaskId !== null ? ", working" : ""}${waiting > 0 ? `, ${waiting} waiting for you` : ""}`}
     style={({ pressed }) => [styles.row, pressed && styles.pressed]} onPress={() => router.push({ pathname: "/agents/[agentId]", params: { agentId: agent.id } })}>
     <AgentAvatar agent={agent} size={44} working={agent.activeTaskId !== null} />
     <View style={styles.rowText}>

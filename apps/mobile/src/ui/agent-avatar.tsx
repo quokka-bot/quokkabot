@@ -1,31 +1,15 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { AccessibilityInfo, Animated, Easing } from "react-native";
+import { Animated, Easing } from "react-native";
 import Svg, { Ellipse, G, Path } from "react-native-svg";
 import { agentLook, AVATAR_MOTION, COLOUR_HEX, EYE_RADIUS, eyeCentres, PRODUCT_MARK, SHAPE_GEOMETRY } from "@quokkabot/client";
 import type { AgentLook, AgentSummary } from "@quokkabot/shared";
+import { reduceMotionNow, subscribeReduceMotion } from "./reduce-motion";
 
 // The web app's agent avatars (apps/web/src/avatar.tsx), from the same shapes and colours. Still at rest. While the agent
 // works: a slow breath on the native thread and eyes looking down at the work. Reduce Motion keeps only the eyes.
 
-// Reduce Motion, read once for the whole app. Until iOS answers, nothing moves.
-let reduceMotion = true;
-let watching = false;
-const listeners = new Set<() => void>();
-function setReduceMotion(value: boolean) {
-  reduceMotion = value;
-  for (const listener of listeners) listener();
-}
-function subscribe(listener: () => void): () => void {
-  if (!watching) {
-    watching = true;
-    AccessibilityInfo.addEventListener("reduceMotionChanged", setReduceMotion);
-    void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
-  }
-  listeners.add(listener);
-  return () => { listeners.delete(listener); };
-}
 function useReduceMotion(): boolean {
-  return useSyncExternalStore(subscribe, () => reduceMotion);
+  return useSyncExternalStore(subscribeReduceMotion, reduceMotionNow);
 }
 
 export function AvatarFace({ look, size, working }: { look: AgentLook; size: number; working: boolean }) {

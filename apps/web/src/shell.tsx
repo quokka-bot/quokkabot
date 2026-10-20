@@ -29,7 +29,7 @@ function AgentRow({ agent }: { agent: AgentSummary }) {
   const preview = agent.waitingOnOwner > 0 ? "Waiting for you" : task ? task.result?.summary ?? task.title : agent.cliSignedIn === "yes" ? "Ready for a task" : "Sign in to Claude";
   return <NavLink to={`/agents/${agent.id}`} className={({ isActive }) => `agent-row${isActive ? " selected" : ""}`}>
     <span className="agent-row-avatar"><AgentAvatar agent={agent} working={agent.activeTaskId !== null} />{agent.waitingOnOwner > 0 && <span className="badge-dot" aria-label={`${agent.waitingOnOwner} waiting`} />}</span>
-    <span className="agent-row-text"><strong>{agent.name}</strong><span className={agent.waitingOnOwner > 0 ? "waiting-preview" : ""}>{preview}</span></span>
+    <span className="agent-row-text"><strong>{agent.name}{agent.activeTaskId !== null && <span className="sr-only">, working</span>}</strong><span className={agent.waitingOnOwner > 0 ? "waiting-preview" : ""}>{preview}</span></span>
   </NavLink>;
 }
 
