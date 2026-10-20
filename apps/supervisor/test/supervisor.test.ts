@@ -492,6 +492,29 @@ describe("supervisor logic with in-memory Docker streams", () => {
     } finally { await router.close(); }
   });
 
+  it.each(["stop", "kill"] as const)("answers a listing and an export that a %s ends mid-way like one that came after it", async (action) => {
+    await service.start(agent());
+    plans.push({ hold: true }, { hold: true });
+    const listing = service.files(agent(), { op: "list", scope: "workspace", dir: "" });
+    const exporting = service.exportFile(agent(), { scope: "workspace", path: "invoice.pdf" });
+    await until(() => executions.size === 2);
+    // The helpers run outside the lifecycle lock: the stop or kill does not wait for them.
+    await (action === "stop" ? service.stop(agent()) : service.kill(agent()));
+    executions.get("e1")!.output("stdout", '{"op":"li');
+    for (const exec of executions.values()) exec.finish(137);
+    const expected = action === "stop" ? { status: 409, code: "computer_stopped" } : { status: 409, code: "killed" };
+    await expect(listing).rejects.toMatchObject(expected);
+    await expect(exporting).rejects.toMatchObject(expected);
+    expect((await readdir(service.runs.root)).filter((name) => name.startsWith(".export-"))).toEqual([]);
+  });
+
+  it("keeps a helper failure an error while the computer runs", async () => {
+    await service.start(agent());
+    plans.push({ stdout: '{"op":"li', exitCode: 137 }, { stdout: "partial", exitCode: 137 });
+    await expect(service.files(agent(), { op: "list", scope: "workspace", dir: "" })).rejects.toMatchObject({ status: 502, code: "invalid_helper_output" });
+    await expect(service.exportFile(agent(), { scope: "workspace", path: "invoice.pdf" })).rejects.toMatchObject({ status: 400, code: "export_failed" });
+  });
+
   it("keeps the kill latch and any other tools sandbox state ahead of file work", async () => {
     await service.start(agent());
     containers.get("qb-tools-1")!.State.Status = "paused";
