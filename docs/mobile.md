@@ -36,7 +36,21 @@ Store builds run on EAS (`eas.json`): set `QB_EAS_PROJECT_ID` and `QB_EXPO_OWNER
 team also needs its own bundle identifiers (`VARIANTS` in `app.config.ts`) and its own App Store Connect app
 (`ascAppId` in `eas.json`): both name Quokka Bot's own app. The GitHub workflow
 `.github/workflows/mobile-eas.yml` does the same when the repository has an `EXPO_TOKEN` secret, and does nothing
-without one.
+without one. A push to main that touches the app starts a production build when the version in `app.config.ts` has
+none yet; a manual run with the default `check` profile shows the token's account and the version's build, and
+builds nothing.
+
+Keep `EXPO_TOKEN` to the app: make an Expo organization that holds only this project, add a robot with the
+Developer role, and use the robot's token. Expo tokens reach everything their account holds, and a robot can read
+every credential in its organization, the distribution certificate included. For the same reason the App Store
+Connect API key stays out of EAS: a team key reaches every app on the Apple team. Submit a finished build to
+TestFlight from your own machine instead:
+
+```sh
+cd apps/mobile
+EXPO_ASC_API_KEY_PATH=<AuthKey_KEYID.p8> EXPO_ASC_KEY_ID=<key id> EXPO_ASC_ISSUER_ID=<issuer id> \
+  eas submit --platform ios --profile production --latest
+```
 
 The app has no over-the-air updates: every change, fixes included, ships in a new build that goes through App
 Review. expo-updates would send Expo an install id and app details on every launch, and the app connects only to the

@@ -4,12 +4,15 @@ name: iPhone app (EAS)
 # every run passes with a note and does nothing.
 #
 # A push to main that touches the app starts a store build when no production build exists yet for the version in
-# app.config.ts, and submits it to TestFlight. Bumping `version` starts the next release. Releasing to the App Store
-# stays a manual step. The app has no over-the-air updates: every change ships in a reviewed build.
-# Manual runs build a profile (production, preview).
+# app.config.ts. Bumping `version` starts the next release. Submitting the build to TestFlight and releasing it to the
+# App Store stay manual steps (docs/mobile.md). The app has no over-the-air updates: every change ships in a reviewed
+# build.
+# Manual runs check the token and the version's store build (check, the default), or build a profile (production,
+# preview).
 #
-# Repository variables: QB_EAS_PROJECT_ID and QB_EXPO_OWNER (the EAS project); the App Store Connect API key for
-# submissions is stored in EAS, not here.
+# Repository variables: QB_EAS_PROJECT_ID and QB_EXPO_OWNER (the EAS project). EXPO_TOKEN belongs to a robot in an
+# Expo organization that holds only this project. The robot can read every credential in that organization, so the
+# App Store Connect API key stays out of it.
 on:
   push:
     branches: [main]
@@ -22,11 +25,11 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: "Build profile"
+        description: "check builds nothing; production and preview start a build"
         required: true
         type: choice
-        default: production
-        options: [production, preview]
+        default: check
+        options: [check, production, preview]
 
 # One run at a time, in merge order, so two merges never start two builds of one version.
 concurrency:
@@ -80,32 +83,46 @@ jobs:
           packager: npm
 
       - name: Build (manual)
-        if: steps.token.outputs.present == 'true' && github.event_name == 'workflow_dispatch'
+        if: steps.token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.profile != 'check'
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           PROFILE: ${{ inputs.profile }}
         run: |
           if [ "$PROFILE" = production ]; then
-            eas build --platform ios --profile production --auto-submit --non-interactive --no-wait
+            eas build --platform ios --profile production --non-interactive --no-wait
           else
             APP_VARIANT=preview eas build --platform ios --profile preview --non-interactive --no-wait
           fi
 
       # A queued, running or finished build of this version counts as existing, so merges during a build never start a
       # second one. An errored or canceled build does not count: the next push builds the version again.
-      - name: Store build for a new version
-        if: steps.token.outputs.present == 'true' && github.event_name == 'push'
+      - id: existing
+        name: Find the store build for this version
+        if: steps.token.outputs.present == 'true' && (github.event_name == 'push' || inputs.profile == 'check')
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
+          echo "EAS account: $(eas whoami)" >> "$GITHUB_STEP_SUMMARY"
           version="$(npx expo config --json --type public | jq -r '.version')"
-          existing="$(eas build:list --platform ios --build-profile production --app-version "$version" --limit 50 --json --non-interactive \
-            | jq '[.[] | select(.status != "ERRORED" and .status != "CANCELED" and .status != "PENDING_CANCEL")] | length')"
-          if [ "$existing" -gt 0 ]; then
-            echo "A production build for $version exists." >> "$GITHUB_STEP_SUMMARY"
+          builds="$(eas build:list --platform ios --build-profile production --app-version "$version" --limit 50 --json --non-interactive \
+            | jq '[.[] | select(.status != "ERRORED" and .status != "CANCELED" and .status != "PENDING_CANCEL")]')"
+          count="$(jq length <<< "$builds")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" -gt 0 ]; then
+            echo "A production build for $version exists: build $(jq -r '.[0].appBuildVersion' <<< "$builds"), $(jq -r '.[0].status' <<< "$builds")." >> "$GITHUB_STEP_SUMMARY"
           else
-            eas build --platform ios --profile production --auto-submit --non-interactive --no-wait
-            echo "Started the production build and TestFlight submission for $version." >> "$GITHUB_STEP_SUMMARY"
+            echo "No production build for $version yet." >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Store build for a new version
+        if: steps.token.outputs.present == 'true' && github.event_name == 'push' && steps.existing.outputs.count == '0'
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          VERSION: ${{ steps.existing.outputs.version }}
+        run: |
+          eas build --platform ios --profile production --non-interactive --no-wait
+          echo "Started the production build for $VERSION. Submit it to TestFlight from the Mac (docs/mobile.md)." >> "$GITHUB_STEP_SUMMARY"
