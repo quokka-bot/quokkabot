@@ -241,6 +241,9 @@ describe("agent lifecycle UI", () => {
     const row = within(screen.getByRole("navigation", { name: "Agents" })).getByRole("link", { name: /Office/ });
     await waitFor(() => expect(row.querySelector("svg.agent-avatar")?.getAttribute("data-shape")).toBe("drop"));
     expect(row.querySelector("svg.agent-avatar")?.getAttribute("data-colour")).toBe("teal");
+    // Another change hides the saved message until it is saved too.
+    fireEvent.click(within(shapes).getByRole("radio", { name: "Egg" }));
+    expect(screen.queryByText("Settings saved.")).toBeNull();
   });
 });
 

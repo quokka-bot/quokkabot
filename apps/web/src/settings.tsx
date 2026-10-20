@@ -125,7 +125,7 @@ export function Settings({ agent }: { agent: AgentSummary }) {
       <LookPicker look={pickedLook ?? agentLook(agent)} onChange={setPickedLook} />
       <label>Model<input value={typedModel ?? agent.model} onChange={event => setModel(event.target.value)} autoCapitalize="none" autoCorrect="off" required maxLength={81} /></label><p className="meta">Current default: {agent.model}</p>
       <label>Effort<select value={pickedEffort ?? agent.effort} onChange={event => setEffort(Effort.parse(event.target.value))}>{Effort.options.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
-      <button className="primary" disabled={save.isPending || !changed}>Save settings</button><ErrorLine error={save.error} />{save.isSuccess && <p role="status">Settings saved.</p>}
+      <button className="primary" disabled={save.isPending || !changed}>Save settings</button><ErrorLine error={save.error} />{save.isSuccess && !changed && <p role="status">Settings saved.</p>}
     </form>
     <AiConsentSetting agent={agent} />
     <OwnerSettings />
