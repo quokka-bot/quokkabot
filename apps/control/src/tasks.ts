@@ -445,7 +445,8 @@ export class TaskService {
     if (!agent || agent.killed_at) return;
     // A withdrawn permission stops everything the agent has queued or running, whichever app queued it. Withdrawing
     // does this at once; dispatch repeats it so a withdrawal that crashed half-way is still enforced.
-    if ((await this.consents.view(this.db, agentId)).state === "withdrawn") {
+    const consent = await this.consents.view(this.db, agentId);
+    if (consent.state === "withdrawn") {
       await this.stopWithoutConsent(agentId);
       return;
     }
@@ -464,7 +465,13 @@ export class TaskService {
       "select * from tasks where agent_id = $1 and pending_prompt is not null and state in ('queued','running') order by updated_at limit 1",
       [agentId],
     );
-    if (task) await this.startRun(task);
+    if (!task) return;
+    // Never asked on a server that requires it: the task ends before the computer starts or the agent gets the lease.
+    if (!consent.allowed) {
+      await this.finishTask(task, "cancelled", null, aiConsentStopped(consent.state));
+      return;
+    }
+    await this.startRun(task);
   }
 
   private async startRun(task: TaskRow): Promise<void> {
@@ -505,6 +512,8 @@ export class TaskService {
     });
     if (prepared === null) return;
     if ("refused" in prepared) {
+      // The permission went between the check above and this transaction: the computer started for nothing.
+      await this.computer.setLease(task.agent_id, "paused", "system").catch((error: unknown) => this.log.warn({ err: String(error) }, "pausing the lease failed"));
       if (prepared.refused === "withdrawn") await this.stopWithoutConsent(task.agent_id);
       else await this.finishTask(await this.get(task.id), "cancelled", null, aiConsentStopped(prepared.refused));
       return;

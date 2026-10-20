@@ -1654,10 +1654,13 @@ describe.skipIf(!enabled)("control plane end to end", () => {
 
       // A task already in the queue never reaches the model either: dispatch ends it without starting a run.
       const before = runs.size;
+      const leasesBefore = leases.length;
       const queued = await queuedTask(AGENT, "Queued before the server required consent.");
       const ended = await taskWhen(queued, "cancelled");
       expect(ended.error).toBe("Not sent: allow sending to Anthropic for this agent, then send it again.");
       expect(runs.size).toBe(before);
+      // The agent never got the browser for it.
+      expect(leases.slice(leasesBefore).some((lease) => lease.holder === "agent")).toBe(false);
 
       // Allowing names the disclosure and the agent occupant the app showed it for.
       const stale = await api("PUT", `/api/agents/${AGENT}/ai-consent`, { allow: true, provider: "anthropic", disclosureVersion: "2000-01-01", generation: agent.generation });
