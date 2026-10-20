@@ -1,10 +1,10 @@
 import { Fragment, useMemo, useRef, useState, type ComponentRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, Stack } from "expo-router";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { TERMINAL_TASK_STATES, type AgentSummary, type DomainRequestView, type InboxResponse, type OwnerRequest, type Task } from "@quokkabot/shared";
-import { askedLine, chatItems, listSites, liveTask, messageReactions, sitesLine, timeLabel, workingStatus, type StepLine } from "@quokkabot/client";
+import { TERMINAL_TASK_STATES, type AgentsResponse, type AgentSummary, type DomainRequestView, type InboxResponse, type OwnerRequest, type Task } from "@quokkabot/shared";
+import { agentNameEdit, askedLine, chatItems, listSites, liveTask, messageReactions, sitesLine, timeLabel, withAgent, workingStatus, type StepLine } from "@quokkabot/client";
 import { DomainRequestCard, OpenOnWeb, RequestCard } from "../cards/requests";
 import { useSignedIn } from "../session";
 import { AgentAvatar, Button, ErrorLine, Notice } from "../ui/kit";
@@ -141,11 +141,40 @@ function AttendedBar({ agentId }: { agentId: string }) {
   </View>;
 }
 
+// The agent's name in the navigation bar opens the iPhone's rename prompt: Save or Return saves, Cancel keeps the old
+// name. A name the app or the server refuses opens the prompt again with the reason and what the owner typed.
+function AgentTitle({ name, busy, onPress }: { name: string; busy: boolean; onPress: () => void }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={`Rename ${name}`} accessibilityState={{ busy }} disabled={busy} onPress={onPress}
+    style={({ pressed }) => [styles.title, pressed && styles.titlePressed]}>
+    <Text style={styles.titleText} numberOfLines={1}>{name}</Text>
+    {busy ? <ActivityIndicator size="small" /> : <Text style={styles.titleEdit}>✎</Text>}
+  </Pressable>;
+}
+
 export function AgentChat({ agentId }: { agentId: string }) {
   const { api, connection } = useSignedIn();
+  const client = useQueryClient();
   const agent = useQuery({ queryKey: [connection.origin, "agent", agentId], queryFn: () => api.agent(agentId), refetchInterval: 5000 });
+  // Renaming sends nothing to the AI provider, so it asks no permission.
+  const rename = useAction(agentId, async (name: string) => {
+    const updated = await api.rename(agentId, name);
+    // A poll sent before the save would otherwise land after this write with the old name.
+    await Promise.all([client.cancelQueries({ queryKey: [connection.origin, "agent", agentId] }), client.cancelQueries({ queryKey: [connection.origin, "agents"], exact: true })]);
+    client.setQueryData([connection.origin, "agent", agentId], updated);
+    client.setQueryData<AgentsResponse>([connection.origin, "agents"], list => withAgent(list, updated));
+    return updated;
+  }, false);
+  const askName = (current: AgentSummary, typed: string, problem?: string) => Alert.prompt(`Rename ${current.name}`, problem, [
+    { text: "Cancel", style: "cancel" },
+    { text: "Save", isPreferred: true, onPress: (value = "") => {
+      const edit = agentNameEdit(value, current.name);
+      if (edit.kind === "invalid") askName(current, value, edit.message);
+      else if (edit.kind === "save") rename.mutate(edit.name, { onError: error => askName(current, value, error.message) });
+    } },
+  ], "plain-text", typed);
+  const current = agent.data;
   return <>
-    <Stack.Screen options={{ title: agent.data?.name ?? "", headerRight: () => <Pressable accessibilityRole="button" accessibilityLabel="Computer"
+    <Stack.Screen options={{ title: current?.name ?? "", ...(current ? { headerTitle: () => <AgentTitle name={current.name} busy={rename.isPending} onPress={() => askName(current, current.name)} /> } : {}), headerRight: () => <Pressable accessibilityRole="button" accessibilityLabel="Computer"
       onPress={() => router.push({ pathname: "/computer/[agentId]", params: { agentId } })}><Text style={styles.headerButton}>Computer</Text></Pressable> }} />
     {agent.data ? <Chat key={`${connection.origin}|${agentId}`} agent={agent.data} /> : <View style={styles.loading}><ErrorLine error={agent.error} />{agent.isPending && <Notice>Loading…</Notice>}</View>}
   </>;
@@ -201,5 +230,7 @@ const styles = StyleSheet.create({
   files: { gap: 10, marginVertical: 10 }, file: { backgroundColor: colors.sidebar, borderRadius: 12, padding: 14, gap: 4 }, fileName: { color: colors.text, fontSize: 16, fontWeight: "600" },
   empty: { alignItems: "center", paddingVertical: 40, gap: 12 }, name: { fontSize: 28, fontWeight: "700", color: colors.text },
   intro: { color: colors.textSoft, fontSize: 16, textAlign: "center" }, retry: { gap: 8, marginVertical: 8 },
+  title: { flexDirection: "row", alignItems: "center", gap: 6, maxWidth: 240, paddingVertical: 6, paddingHorizontal: 8, borderRadius: 8 }, titlePressed: { backgroundColor: colors.sidebar },
+  titleText: { flexShrink: 1, color: colors.text, fontSize: 17, fontWeight: "600" }, titleEdit: { color: colors.muted, fontSize: 15 },
   attended: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 10, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: colors.sidebar },
 });

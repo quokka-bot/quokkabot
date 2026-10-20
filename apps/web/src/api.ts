@@ -127,6 +127,8 @@ export const api = {
   aiConsent: (id: string) => request(`${agentPath(id)}/ai-consent`, AiConsentView),
   setAiConsent: (id: string, input: AiConsentRequest) => request(`${agentPath(id)}/ai-consent`, AiConsentView, "PUT", AiConsentRequest.parse(input)),
   settings: async (id: string, model: string, effort: string, name?: string) => rememberAgent(await request(`${agentPath(id)}/settings`, AgentSummary, "PUT", AgentSettingsRequest.parse({ model, effort, ...(name === undefined ? {} : { name }) }))),
+  // Sends only the name: a model or effort changed in another app a moment ago stays as it is.
+  rename: async (id: string, name: string) => rememberAgent(await request(`${agentPath(id)}/settings`, AgentSummary, "PUT", AgentSettingsRequest.parse({ name }))),
   computer: (id: string, action: "start" | "stop") => request(`${agentPath(id)}/computer/${action}`, ComputerView, "POST", {}),
   kill: (id: string) => request(`${agentPath(id)}/kill`, ComputerView, "POST", {}),
   releaseKill: (id: string) => request(`${agentPath(id)}/kill/release`, ComputerView, "POST", {}),

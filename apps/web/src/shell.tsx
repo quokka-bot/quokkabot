@@ -15,6 +15,7 @@ import { Files } from "./files.js";
 import { Logins } from "./logins.js";
 import { Settings } from "./settings.js";
 import { NewAgentDialog, NewAgentForm } from "./agent-dialog.js";
+import { AgentNameHeading } from "./agent-name.js";
 import { ErrorLine, Status, stateLabel, useAction, usePollInterval } from "./ui.js";
 
 // The window: agents on the left, the selected agent's chat (or one of its screens) in the middle, its details on the
@@ -102,7 +103,7 @@ function Panel({ agent, index, onClose }: { agent: AgentSummary; index: number; 
     <div className="panel-top"><button type="button" className="round-button" aria-label="Close details" onClick={onClose}>×</button></div>
     <div className="panel-head">
       <AgentAvatar index={index} size={76} />
-      <h2>{agent.name}</h2>
+      <AgentNameHeading agent={agent} />
       <p>{agent.model} · {agent.effort}</p>
     </div>
     <div className="tabs" role="tablist">

@@ -1368,6 +1368,9 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     expect(claims.find(result => result.status === 201)?.body).toMatchObject({ id: AGENT2, index: 2, cliSignedIn: "no" });
     const renamed = await api("PUT", `/api/agents/${AGENT2}/settings`, { name: "  Accounts  ", model: "claude-opus-5-5", effort: "xhigh" });
     expect(renamed.body.name).toBe("Accounts");
+    await api("PUT", `/api/agents/${AGENT2}/settings`, { model: "claude-sonnet-5-5", effort: "high" });
+    const nameOnly = await api("PUT", `/api/agents/${AGENT2}/settings`, { name: "Ledger" });
+    expect(nameOnly.body).toMatchObject({ name: "Ledger", model: "claude-sonnet-5-5", effort: "high" });
     const saved = await api("POST", `/api/agents/${AGENT2}/logins`, { name: "Vendor", sites: ["vendor.example.com"], username: "owner", password: "private-password" });
     expect(saved.status).toBe(200);
     const ticket = await api("POST", `/api/agents/${AGENT2}/view-ticket`, {});

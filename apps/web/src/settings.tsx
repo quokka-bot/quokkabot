@@ -5,6 +5,7 @@ import { DesktopLinkDecideRequest, Effort, type AgentSummary, type SessionView }
 import { encode } from "uqr";
 import { api } from "./api.js";
 import { RemoveAgent } from "./agent-dialog.js";
+import { storeAgent } from "./agent-name.js";
 import { AiConsentSetting } from "./ai-consent.js";
 import { ClaudeSetting } from "./claude-sign-in.js";
 import { LINK_CODE_KEY } from "./link.js";
@@ -98,13 +99,20 @@ export function OwnerSettings() {
 }
 
 export function Settings({ agent }: { agent: AgentSummary }) {
-  const [name, setName] = useState(agent.name);
+  // Null until the owner types here: the field shows a rename made in the details panel, and Save sends a name only
+  // when the owner typed one, then follows the agent's name again.
+  const [typedName, setName] = useState<string | null>(null);
   const [model, setModel] = useState(agent.model);
   const [effort, setEffort] = useState(agent.effort);
-  const save = useAction(() => api.settings(agent.id, model.trim(), effort, name.trim()));
+  const client = useQueryClient();
+  const save = useAction(async () => {
+    const sent = typedName?.trim();
+    await storeAgent(client, await api.settings(agent.id, model.trim(), effort, sent));
+    setName(current => current?.trim() === sent ? null : current);
+  });
   return <>
     <h2>Settings</h2><form className="card settings-form" onSubmit={event => { event.preventDefault(); save.mutate(); }}>
-      <label>Name<input value={name} onChange={event => setName(event.target.value)} required maxLength={40} /></label>
+      <label>Name<input value={typedName ?? agent.name} onChange={event => setName(event.target.value)} required maxLength={40} /></label>
       <label>Model<input value={model} onChange={event => setModel(event.target.value)} autoCapitalize="none" autoCorrect="off" required maxLength={81} /></label><p className="meta">Current default: {agent.model}</p>
       <label>Effort<select value={effort} onChange={event => setEffort(Effort.parse(event.target.value))}>{Effort.options.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
       <button className="primary" disabled={save.isPending}>Save settings</button><ErrorLine error={save.error} />{save.isSuccess && <p role="status">Settings saved.</p>}

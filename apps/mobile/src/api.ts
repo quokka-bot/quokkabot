@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  AgentSummary, AgentsResponse, AiConsentRequest, AiConsentView, ApiError, AttendedRequest, ComputerView, ControlLease, CreateTaskRequest, DecideDomainRequest, DomainsView, EmptyResponse,
+  AgentSettingsRequest, AgentSummary, AgentsResponse, AiConsentRequest, AiConsentView, ApiError, AttendedRequest, ComputerView, ControlLease, CreateTaskRequest, DecideDomainRequest, DomainsView, EmptyResponse,
   InboxResponse, LoginView, Me, ReactionRequest, type ReactionEmoji, ReplyRequest, SaveLoginRequest, ScreenSize, SessionView,
   TakeoverDoneRequest, TakeoverFillRequest, TakeoverFillResponse, TakeoverFocusResponse, TakeoverRequest, TakeoverScreenRequest, Task, TaskDetail,
   TaskPage, UpdateLoginRequest, ViewTicketResponse,
@@ -88,6 +88,8 @@ export function createApi(fetchImpl: Fetch, origin: string, token: string, onSig
       return result;
     },
     agent: async (id: string) => remember(await request(agentPath(id), AgentSummary)),
+    // Sends only the name: a model or effort changed in another app a moment ago stays as it is.
+    rename: async (id: string, name: string) => remember(await request(`${agentPath(id)}/settings`, AgentSummary, "PUT", AgentSettingsRequest.parse({ name }))),
     // The owner's permission to send this agent's work to its AI provider, kept on the server for every app.
     setAiConsent: async (id: string, input: AiConsentRequest) => {
       const view = await request(`${agentPath(id)}/ai-consent`, AiConsentView, "PUT", AiConsentRequest.parse(input));
