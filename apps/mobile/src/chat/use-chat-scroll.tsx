@@ -26,6 +26,14 @@ export function useChatScroll(view: string, ready: boolean) {
   const opening = visit.view !== view || !visit.shown;
   const current = useRef(view);
   useLayoutEffect(() => { kept.current = null; current.current = view; }, [view]);
+  // "Loading…" shows only when opening takes a moment, as in the web app.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!opening) return;
+    const timer = setTimeout(() => setSlow(true), 400);
+    return () => clearTimeout(timer);
+  }, [opening]);
   useEffect(() => {
     if (!opening || !ready) return;
     following.current = true;
@@ -35,7 +43,7 @@ export function useChatScroll(view: string, ready: boolean) {
     return () => cancelAnimationFrame(frame);
   }, [opening, ready, view]);
   return {
-    opening,
+    opening, loading: opening && slow,
     scrollProps: {
       ref: scroll, scrollEventThrottle: 16,
       onContentSizeChange: (_width: number, height: number) => { size.current.content = height; if (following.current) toEnd(); },

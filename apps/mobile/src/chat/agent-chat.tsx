@@ -205,9 +205,9 @@ function Chat({ agent }: { agent: AgentSummary }) {
   const ready = chatOpened({ tasks, task: selectedId === null ? null : detail, events: stream.events, streamFailed: stream.error !== null });
   const scroll = useChatScroll(view, ready);
   return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={insets.top + 44}>
-    {scroll.opening && <View style={styles.opening} pointerEvents="none"><Notice>Loading…</Notice></View>}
+    {scroll.loading && <View style={styles.opening} pointerEvents="none"><Notice>Loading…</Notice></View>}
     <ScrollView {...scroll.scrollProps} style={[styles.screen, scroll.opening && styles.hidden]} contentContainerStyle={styles.chat} keyboardShouldPersistTaps="handled"
-      accessibilityElementsHidden={scroll.opening} accessibilityLabel={`${agent.name} chat`}>
+      pointerEvents={scroll.opening ? "none" : "auto"} accessibilityElementsHidden={scroll.opening} accessibilityLabel={`${agent.name} chat`}>
       <ErrorLine error={tasks.error ?? inbox.error} />
       {list.length === 0 && !tasks.isPending && !tasks.error && (agent.cliSignedIn !== "yes" ? <Notice>{SIGNED_OUT}</Notice> : <View style={styles.empty}>
         <AgentAvatar index={agent.index} size={72} /><Text style={styles.name}>{agent.name}</Text>
