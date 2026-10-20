@@ -261,8 +261,8 @@ export function AgentChat({ agent, index }: { agent: AgentSummary; index: number
   const openQuestion = openRequests.find(request => request.kind === "question") ?? openRequests[0] ?? null;
   const open = (taskId: string) => { void navigate(`/agents/${agent.id}?task=${taskId}`); };
   const stream = useTaskStream(selectedId);
-  // What the owner opened: the latest task follows the task list, so a new task there does not open the chat again.
-  const view = params.get("task") ?? (wantsNew ? "new" : "latest");
+  // What the chat shows: a task, a new task, or the latest task, which opens again when another task becomes the latest.
+  const view = params.get("task") ?? (wantsNew ? "new" : selectedId ?? "latest");
   const ready = chatOpened({ tasks, task: selectedId === null ? null : detail, events: stream.events, streamFailed: Boolean(stream.error) });
   const scroll = useChatScroll(view, ready);
   return <div className="chat">

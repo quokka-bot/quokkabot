@@ -200,8 +200,8 @@ function Chat({ agent }: { agent: AgentSummary }) {
   const openRequests = detail.data?.openRequests.filter(request => request.answeredAt === null) ?? [];
   const openSites = inbox.data?.items.some(item => item.kind === "domain_request" && item.request.taskId === selectedId) ?? false;
   const openQuestion = openRequests.find(request => request.kind === "question") ?? openRequests[0] ?? null;
-  // What the owner opened: the latest task follows the task list, so a new task there does not open the chat again.
-  const view = selection === undefined ? "latest" : selection ?? "new";
+  // What the chat shows: a task, a new task, or the latest task, which opens again when another task becomes the latest.
+  const view = selection === undefined ? selectedId ?? "latest" : selection ?? "new";
   const ready = chatOpened({ tasks, task: selectedId === null ? null : detail, events: stream.events, streamFailed: stream.error !== null });
   const scroll = useChatScroll(view, ready);
   return <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={insets.top + 44}>

@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
@@ -326,6 +326,30 @@ describe("chat scrolling", () => {
     watch.disconnect();
     expect(hidden).toEqual([]);
     expect(opening()).toBe(false);
+  });
+
+  it("opens the chat again at the end when a task started elsewhere becomes the latest", async () => {
+    const newer = { ...task, id: domainRequestId, title: "Collect October invoices" };
+    let started = false;
+    handler = path => {
+      if (path === `/api/agents/${agentId}/tasks?`) return json({ tasks: started ? [newer, task] : [task], nextBefore: null });
+      if (path === `/api/tasks/${newer.id}`) return json({ ...detail, task: newer, lastSeq: 1 });
+      return undefined;
+    };
+    await openChat();
+    const { scroller, opening } = chatScroller({ content: 2000, viewport: 500 });
+    await waitFor(() => expect(opening()).toBe(false));
+    scroller.scrollTop = 300;
+    fireEvent.scroll(scroller);
+    started = true;
+    act(() => { focusManager.setFocused(false); focusManager.setFocused(true); });
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(2));
+    expect(opening()).toBe(true);
+    const latest = MockEventSource.instances[1];
+    if (!latest) throw new Error("The new task's stream did not open");
+    act(() => latest.emit(1, { kind: "owner_message", text: "Collect October invoices", attachments: [] }));
+    await waitFor(() => expect(opening()).toBe(false));
+    expect(scroller.scrollTop).toBe(1500);
   });
 
   it("opens a task hidden again when the owner returns to it before another task finished loading", async () => {
