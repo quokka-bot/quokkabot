@@ -26,6 +26,7 @@ import {
   type DomainRequestId,
   type DomainsView,
   type FileListing,
+  type FilesResult,
   type InboxItem,
   RelPath,
   ReplyRequest,
@@ -51,7 +52,7 @@ import type { AuditLog } from "./audit.js";
 import type { AgentSlots } from "./agents.js";
 import type { AiConsents } from "./consent.js";
 import { Auth, CHALLENGE_COOKIE, KILL_COOKIE, SESSION_COOKIE, type SessionInfo, VIEW_COOKIE, isFresh, killCapability, killCapabilityValid } from "./auth.js";
-import { UpstreamError, type SupervisorClient } from "./clients.js";
+import { UpstreamError, supervisorErrorCode, type SupervisorClient } from "./clients.js";
 import type { AgentHandles, ComputerService } from "./computer.js";
 import type { ControlConfig } from "./config.js";
 import type { DesktopLinks } from "./desktop.js";
@@ -62,6 +63,7 @@ import { ClaudeSignIns, sharedSignIn } from "./claude-sign-in.js";
 import { aboutPage, connectedPage, privacyPage } from "./pages.js";
 import { type Db, many, maybeOne, one } from "./db.js";
 import { HttpError } from "./errors.js";
+import { listDownloads } from "./files.js";
 import { serializeRequest } from "./logging.js";
 import type { TaskEvents } from "./events.js";
 import type { PolicyService } from "./policy.js";
@@ -983,6 +985,14 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
 
   // --- Files --------------------------------------------------------------------------------------------------------
 
+  // The workspace lives on the agent's computer. A computer that is stopped or behind the kill switch is a normal
+  // state: the owner gets what to do. Every other supervisor failure stays an error.
+  const computerNotRunning = (error: unknown, purpose: string): unknown => {
+    if (supervisorErrorCode(error, 409) === "computer_stopped") return new HttpError(409, "computer_stopped", `The computer is stopped. Start it ${purpose}.`);
+    if (supervisorErrorCode(error, 409) === "killed") return new HttpError(409, "killed", `The kill switch is on. Release it and start the computer ${purpose}.`);
+    return error;
+  };
+
   app.get<{ Params: { agentId: string }; Querystring: { scope?: string; dir?: string; cursor?: string } }>(
     "/api/agents/:agentId/files",
     appRoute,
@@ -991,39 +1001,46 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
       const agentId = await agentParam(request.params.agentId);
       const scope = request.query.scope === "workspace" ? "workspace" : "downloads";
       const dir = parse(RelPath, request.query.dir ?? "");
-      const result = await supervisor.files(agentId, {
-        op: "list",
-        scope,
-        dir,
-        ...(request.query.cursor ? { cursor: request.query.cursor } : {}),
-      });
-      if (result.op === "error") throw new HttpError(404, result.code, result.message);
-      if (result.op !== "list") throw new Error("unexpected helper result");
-      const published = new Map<string, Record<string, unknown>>();
-      if (scope === "downloads") {
-        const rows = await many<{ id: string; name: string; rel_path: string; bytes: number; sha256: string; mime_type: string; source_url: string | null; task_id: string | null; created_at: Date }>(
-          db,
-          "select * from files where agent_id = $1 and scope = 'downloads'",
-          [agentId],
-        );
-        for (const r of rows) {
-          published.set(r.rel_path, {
-            fileId: r.id,
-            name: r.name,
-            bytes: r.bytes,
-            sha256: r.sha256,
-            mimeType: r.mime_type,
-            sourceUrl: r.source_url,
-            taskId: r.task_id,
-            createdAt: r.created_at.toISOString(),
-          });
+      const cursor = request.query.cursor || undefined;
+      if (scope === "workspace") {
+        let result: FilesResult;
+        try {
+          result = await supervisor.files(agentId, { op: "list", scope, dir, ...(cursor ? { cursor } : {}) });
+        } catch (error) {
+          throw computerNotRunning(error, "to see the workspace files");
         }
+        if (result.op === "error") throw new HttpError(404, result.code, result.message);
+        if (result.op !== "list") throw new Error("unexpected helper result");
+        return { scope, dir, entries: result.entries.map((e) => ({ ...e, file: null })), nextCursor: result.nextCursor };
+      }
+      // Downloads come from the control plane's own directory and records, never from the agent's computer.
+      if (dir !== "" && dir !== ".") throw new HttpError(404, "not_found", "Downloads has no folders.");
+      const agent = config.agents.find((a) => a.agentId === agentId);
+      if (!agent) throw new HttpError(404, "unknown_agent", "No such agent.");
+      const listing = await listDownloads(agent.downloadsDir, cursor);
+      const rows = await many<{ id: string; name: string; rel_path: string; bytes: number; sha256: string; mime_type: string; source_url: string | null; task_id: string | null; created_at: Date }>(
+        db,
+        "select * from files where agent_id = $1 and scope = 'downloads'",
+        [agentId],
+      );
+      const published = new Map<string, Record<string, unknown>>();
+      for (const r of rows) {
+        published.set(r.rel_path, {
+          fileId: r.id,
+          name: r.name,
+          bytes: r.bytes,
+          sha256: r.sha256,
+          mimeType: r.mime_type,
+          sourceUrl: r.source_url,
+          taskId: r.task_id,
+          createdAt: r.created_at.toISOString(),
+        });
       }
       return {
         scope,
         dir,
-        entries: result.entries.map((e) => ({ ...e, file: (published.get(e.path) ?? null) as never })),
-        nextCursor: result.nextCursor,
+        entries: listing.entries.map((e) => ({ ...e, file: (published.get(e.path) ?? null) as never })),
+        nextCursor: listing.nextCursor,
       };
     },
   );
@@ -1050,7 +1067,9 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
       void reply.headers({ "content-type": file.mime_type, "content-length": info.size, "content-disposition": disposition, "cache-control": "no-store" });
       return reply.send(createReadStream(path));
     }
-    const res = await supervisor.exportFile(file.agent_id, { scope: "workspace", path: file.rel_path });
+    const res = await supervisor.exportFile(file.agent_id, { scope: "workspace", path: file.rel_path }).catch((error: unknown) => {
+      throw computerNotRunning(error, "to download this file");
+    });
     void reply.headers({ "content-type": "application/octet-stream", "content-disposition": disposition, "cache-control": "no-store" });
     return reply.send(res.stream);
   });
@@ -1059,7 +1078,9 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
     await requireSession(request);
     const agentId = await agentParam(request.params.agentId);
     const path = parse(RelPath, request.query.path ?? "");
-    const res = await supervisor.exportFile(agentId, { scope: "workspace", path });
+    const res = await supervisor.exportFile(agentId, { scope: "workspace", path }).catch((error: unknown) => {
+      throw computerNotRunning(error, "to download this file");
+    });
     const name = path.split("/").at(-1) ?? "file";
     void reply.headers({
       "content-type": "application/octet-stream",

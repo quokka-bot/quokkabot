@@ -440,8 +440,23 @@ export class Supervisor {
     const result = await this.capture(agent, "tools", this.execBody([TOOLS_PATHS.resetTools], { AttachStdin: false }), "", 16_384);
     if (result.exitCode !== 0 && result.exitCode !== 1) throw new ApiError(502, "reset_failed", "Tools process reset failed");
   }
+  // The files helper runs in the tools sandbox. A computer that was never started (no container), was created but not
+  // started, or was stopped (exited) is a normal state with a typed 409, decided under the lifecycle lock so a stop or
+  // start cannot interleave with the exec. Any other container state is a real failure.
+  private async launchFiles(agent: AgentConfig, cmd: string[]): Promise<{ id: string; stream: Duplex }> {
+    return this.exclusive(agent, async () => {
+      await this.requireLive(agent);
+      const tools = await this.inspect(agent, "tools");
+      const state = tools?.State.Status ?? "missing";
+      if (state === "missing" || state === "created" || state === "exited") throw new ApiError(409, "computer_stopped", "The computer is stopped");
+      if (state !== "running") throw new ApiError(502, "tools_unavailable", `The tools sandbox is ${state}`);
+      return this.launch(agent, "tools", this.execBody(cmd));
+    });
+  }
+
   async files(agent: AgentConfig, request: FilesRequest): Promise<FilesResult> {
-    const result = await this.capture(agent, "tools", this.execBody([TOOLS_PATHS.filesHelper]), JSON.stringify(request), 2 * 1024 * 1024);
+    const launched = await this.launchFiles(agent, [TOOLS_PATHS.filesHelper]);
+    const result = await this.collect(launched.id, launched.stream, JSON.stringify(request), 2 * 1024 * 1024);
     if (result.truncated) throw new ApiError(502, "files_failed", "File helper exceeded the response limit");
     let parsed: FilesResult;
     try {
@@ -468,7 +483,7 @@ export class Supervisor {
     const path = join(temporary, "file");
     const dispose = () => rm(temporary, { recursive: true, force: true });
     try {
-      const launched = await this.exclusive(agent, () => this.launch(agent, "tools", this.execBody(["/opt/quokkabot/bin/qb-files", "export"])));
+      const launched = await this.launchFiles(agent, [TOOLS_PATHS.filesHelper, "export"]);
       const file = await open(path, "wx", 0o600);
       let bytes = 0;
       let stderr = "";
