@@ -73,6 +73,15 @@ export function migratedOwnerName(stored: string): string | null {
   return stored === "Owner" || !parsed.success ? null : parsed.data;
 }
 
+// Migration 22: the owner's name is the owner's to give, at setup or in Settings, and null until then. The row is
+// cleaned before the check goes on, so a stored '' cannot stop the upgrade.
+export async function migrateOwnerName(tx: Tx): Promise<void> {
+  await tx.query("alter table owner_account alter column name drop not null");
+  const row = await maybeOne<{ name: string }>(tx, "select name from owner_account where id = 1");
+  if (row) await tx.query("update owner_account set name = $1 where id = 1", [migratedOwnerName(row.name)]);
+  await tx.query("alter table owner_account add constraint owner_account_name_check check (name <> '')");
+}
+
 // Schema migrations, applied in order by the owner role. Each runs once in its own transaction: its SQL, then its
 // data step (for changes SQL cannot compute, such as a site from the Public Suffix List).
 type Migration =
@@ -616,13 +625,7 @@ const MIGRATIONS: Migration[] = [
   },
   {
     id: 22,
-    // The owner's name is the owner's to give, at setup or in Settings, and null until then.
-    data: async (tx) => {
-      await tx.query("alter table owner_account alter column name drop not null");
-      await tx.query("alter table owner_account add constraint owner_account_name_check check (name <> '')");
-      const row = await maybeOne<{ name: string }>(tx, "select name from owner_account where id = 1");
-      if (row) await tx.query("update owner_account set name = $1 where id = 1", [migratedOwnerName(row.name)]);
-    },
+    data: migrateOwnerName,
   },
 ];
 

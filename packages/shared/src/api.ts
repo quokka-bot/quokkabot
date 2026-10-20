@@ -49,9 +49,10 @@ function hasHiddenCharacter(value: string): boolean {
   for (let i = 0; i < value.length; i += 1) {
     const unit = value.charCodeAt(i);
     if (unit <= 0x1f || (unit >= 0x7f && unit <= 0x9f)) return true;
-    // Zero-width space, direction marks, line and paragraph separators, direction embeddings, overrides and isolates,
-    // byte order mark. Joiners (U+200C, U+200D) stay: scripts and emoji need them.
-    if (unit === 0x200b || unit === 0x200e || unit === 0x200f || unit === 0x2028 || unit === 0x2029 || unit === 0xfeff) return true;
+    // Zero-width space, direction marks (Arabic letter mark, left-to-right and right-to-left marks), line and paragraph
+    // separators, direction embeddings, overrides and isolates, byte order mark. Joiners (U+200C, U+200D) stay: scripts
+    // and emoji need them.
+    if (unit === 0x061c || unit === 0x200b || unit === 0x200e || unit === 0x200f || unit === 0x2028 || unit === 0x2029 || unit === 0xfeff) return true;
     if ((unit >= 0x202a && unit <= 0x202e) || (unit >= 0x2066 && unit <= 0x2069)) return true;
     if (unit >= 0xdc00 && unit <= 0xdfff) return true;
     if (unit >= 0xd800 && unit <= 0xdbff) {

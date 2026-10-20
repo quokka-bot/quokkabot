@@ -55,6 +55,8 @@ function OwnerNameSection() {
   return <Section title="Your name">
     {me.data ? <OwnerNameForm initial={me.data.ownerName} save={async (name) => {
       const saved = await api.setOwnerName(name);
+      // A read that started before the save must not put the old name back.
+      await client.cancelQueries({ queryKey: [connection.origin, "me"] });
       client.setQueryData<Me>([connection.origin, "me"], saved);
       return saved.ownerName;
     }} /> : <ErrorLine error={me.error} />}
@@ -63,10 +65,17 @@ function OwnerNameSection() {
 
 function OwnerNameForm({ initial, save }: { initial: string; save: (name: string) => Promise<string> }) {
   const [value, setValue] = useState(initial);
+  // A name another device saved replaces the field's text when the owner has not edited it.
+  const [stored, setStored] = useState(initial);
+  if (initial !== stored) {
+    setStored(initial);
+    if (value === stored) setValue(initial);
+  }
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const submit = async () => {
+    if (busy) return;
     const parsed = OwnerName.safeParse(value);
     setSaved(false);
     if (!parsed.success) { setError(new Error(parsed.error.issues[0]?.message ?? "Enter your name.")); return; }
@@ -74,7 +83,7 @@ function OwnerNameForm({ initial, save }: { initial: string; save: (name: string
     try { setValue(await save(parsed.data)); setSaved(true); } catch (failure) { setError(failure); } finally { setBusy(false); }
   };
   return <View style={styles.nameForm}>
-    <TextInput style={styles.input} value={value} onChangeText={(text) => { setValue(text); setSaved(false); }} placeholder="Your name" autoComplete="name"
+    <TextInput style={styles.input} value={value} onChangeText={(text) => { setValue(text); setSaved(false); }} editable={!busy} placeholder="Your name" autoComplete="name"
       textContentType="name" returnKeyType="done" onSubmitEditing={() => void submit()} accessibilityLabel="Your name" />
     <Button title="Save name" kind="light" busy={busy} disabled={value.trim() === ""} onPress={() => void submit()} />
     {saved && <Text accessibilityRole="text" style={styles.help}>Name saved.</Text>}

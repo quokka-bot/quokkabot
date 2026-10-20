@@ -65,7 +65,7 @@ describe("the owner's name", () => {
   it("is saved normalized from the web and Mac apps and from the phone, and read back by every device", async () => {
     const { server, account, audit } = await fixture();
     try {
-      const saved = await server.inject({ method: "PUT", url: "/api/me", headers: browser, payload: { ownerName: "  Émile   Example " } });
+      const saved = await server.inject({ method: "PUT", url: "/api/me", headers: browser, payload: { ownerName: "  E\u0301mile   Example " } });
       expect(saved.statusCode).toBe(200);
       expect(saved.json()).toEqual({ ownerName: "Émile Example", passkeys: 1, freshUntil: null });
       expect(account?.name).toBe("Émile Example");
@@ -108,6 +108,19 @@ describe("the owner's name", () => {
       const response = await server.inject({ method: "GET", url: "/api/me", headers });
       expect(response.statusCode).toBe(status);
       expect(response.body).not.toContain("Robin");
+    } finally { await server.close(); }
+  });
+
+  it("gives another site's page no CORS permission to read it", async () => {
+    const { server } = await fixture({ name: "Robin" });
+    try {
+      for (const origin of [view.origin, "https://evil.test"]) {
+        for (const method of ["GET", "OPTIONS"] as const) {
+          const response = await server.inject({ method, url: "/api/me", headers: { ...browser, origin, "access-control-request-method": "PUT" } });
+          expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+          expect(response.headers["access-control-allow-credentials"]).toBeUndefined();
+        }
+      }
     } finally { await server.close(); }
   });
 
@@ -161,7 +174,7 @@ describe("the owner's name on servers set up before it could be given", () => {
   it.each([
     ["Owner", null],
     ["Robin", "Robin"],
-    ["  Émile ", "Émile"],
+    ["  E\u0301mile ", "Émile"],
     ["Robin\nExample", null],
     ["", null],
   ])("keeps %j as %j", (stored, migrated) => {

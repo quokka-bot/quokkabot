@@ -478,6 +478,48 @@ it("shows a person outline on the avatar until the owner gives a name, then the 
   expect(screen.getByRole("link", { name: "Settings" }).textContent).toBe("👩‍💻");
 });
 
+it("saves one name at a time and shows Name saved only for the name it saved", async () => {
+  let ownerName = "Ada";
+  let finish!: () => void;
+  handler = (path, init) => {
+    if (path === "/api/me" && init?.method === "PUT") return new Promise<Response>(resolve => { finish = () => { ownerName = "Robin"; resolve(json({ ...me, ownerName })); }; });
+    if (path === "/api/me") return json({ ...me, ownerName });
+    return undefined;
+  };
+  renderApp("/settings");
+  const form = await screen.findByRole("form", { name: "Your name" });
+  const input = within(form).getByRole("textbox", { name: "Your name" }) as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "Robin" } });
+  fireEvent.click(within(form).getByRole("button", { name: "Save name" }));
+  await waitFor(() => expect(input.readOnly).toBe(true));
+  expect((within(form).getByRole("button", { name: "Save name" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.submit(form);
+  expect(fetchMock.mock.calls.filter(([url, init]) => url === "/api/me" && init?.method === "PUT")).toHaveLength(1);
+  await act(async () => { finish(); });
+  expect(await within(form).findByText("Name saved.")).toBeTruthy();
+  expect(input.readOnly).toBe(false);
+  expect(screen.getByRole("link", { name: "Settings" }).textContent).toBe("R");
+  fireEvent.change(input, { target: { value: "Robin E" } });
+  expect(within(form).queryByText("Name saved.")).toBeNull();
+});
+
+it("takes a name saved on another device into the field unless the owner is editing it", async () => {
+  let ownerName = "Ada";
+  handler = path => path === "/api/me" ? json({ ...me, ownerName }) : undefined;
+  renderApp("/settings");
+  const form = await screen.findByRole("form", { name: "Your name" });
+  const input = within(form).getByRole("textbox", { name: "Your name" }) as HTMLInputElement;
+  expect(input.value).toBe("Ada");
+  ownerName = "Kim";
+  await act(async () => { await clients[0]?.invalidateQueries({ queryKey: ["me"] }); });
+  await waitFor(() => expect(input.value).toBe("Kim"));
+  fireEvent.change(input, { target: { value: "Ro" } });
+  ownerName = "Lee";
+  await act(async () => { await clients[0]?.invalidateQueries({ queryKey: ["me"] }); });
+  await waitFor(() => expect(screen.getByRole("link", { name: "Settings" }).textContent).toBe("L"));
+  expect(input.value).toBe("Ro");
+});
+
 it("shows the server's refusal of a name beside the field", async () => {
   handler = (path, init) => {
     if (path === "/api/me" && init?.method === "PUT") return json({ error: { code: "not_set_up", message: "This server has no owner yet. Use the setup link from the server." } }, 409);

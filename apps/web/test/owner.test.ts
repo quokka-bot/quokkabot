@@ -7,11 +7,12 @@ describe("the owner avatar's initial", () => {
     ["robin", "R"],
     ["Ąžuolas", "Ą"],
     ["ąžuolas", "Ą"],
-    ["Émile", "É"],
+    ["E\u0301mile", "E\u0301"],
     ["émile", "É"],
     ["👩‍💻 Kim", "👩‍💻"],
     ["👍🏽 Sam", "👍🏽"],
     ["ßigi", "ß"],
+    ["a\u0345da", "a\u0345"],
     ["李小龍", "李"],
   ])("of %j is %j", (name, initial) => {
     expect(ownerInitial(name)).toBe(initial);
