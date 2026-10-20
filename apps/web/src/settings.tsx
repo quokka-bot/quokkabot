@@ -117,7 +117,7 @@ export function Settings({ agent }: { agent: AgentSummary }) {
     setName(current => current?.trim() === sent.name ? null : current);
     setModel(current => current?.trim() === sent.model ? null : current);
     setEffort(current => current === (sent.effort ?? null) ? null : current);
-    setPickedLook(current => current === (sent.look ?? null) ? null : current);
+    setPickedLook(current => current !== null && current.shape === sent.look?.shape && current.colour === sent.look.colour ? null : current);
   });
   return <>
     <h2>Settings</h2><form className="card settings-form" onSubmit={event => { event.preventDefault(); save.mutate(); }}>
