@@ -680,9 +680,16 @@ export class TaskService {
   private async enforceFence(runId: string): Promise<void> {
     const run = await maybeOne<RunRow>(this.db, "select * from runs where id = $1", [runId]);
     if (!run?.fenced_at || run.fence_reason === "cancelled") return;
-    // A run stopped for a withdrawn permission is cancelled again until the supervisor reports it ended.
+    // A run stopped for a withdrawn permission is cancelled until the supervisor reports it ended. When cancelling
+    // fails, the CLI may still be talking to the provider: the kill switch freezes the agent's network and stops its
+    // computer, and only the owner's passkey releases it.
     if (run.fence_reason === "ai_consent") {
-      await this.supervisor.cancelRun(runId).catch(() => undefined);
+      try {
+        await this.supervisor.cancelRun(runId);
+      } catch (error) {
+        const kill = await this.computer.kill(run.agent_id);
+        this.log.error({ err: String(error), killErrors: kill.errors, runId }, "cancelling a run without consent failed; kill switch engaged");
+      }
       return;
     }
     if (Date.now() - run.fenced_at.getTime() > FENCE_GRACE_MS) {

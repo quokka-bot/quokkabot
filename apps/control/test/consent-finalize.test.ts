@@ -31,4 +31,18 @@ describe("finalizing a run fenced for a withdrawn permission", () => {
     expect(audit.append).toHaveBeenCalledWith(agentId, "system", "run.exited", { runId, state: "cancelled", exitCode: 0 });
     expect(finishes).toEqual([[expect.objectContaining({ id: taskId }), "cancelled", null, "Stopped: sending to Anthropic is off for this agent."]]);
   });
+
+  it("engages the kill switch when cancelling a run without consent fails", async () => {
+    const query = vi.fn(async () => ({ rows: [{ id: "run-2", agent_id: "agent-2", fenced_at: new Date(), fence_reason: "ai_consent" }] }));
+    const supervisor = { cancelRun: vi.fn(async () => { throw new Error("CLI cancellation wrapper failed"); }) };
+    const computer = { kill: vi.fn(async () => ({ errors: [] })) };
+    const service = new TaskService({ query } as unknown as Db, {} as never, {} as never, supervisor as never, computer as never, {} as never,
+      pino({ level: "silent" }), () => ["agent-2"], {} as never);
+    await (service as unknown as { enforceFence(runId: string): Promise<void> }).enforceFence("run-2");
+    expect(supervisor.cancelRun).toHaveBeenCalledWith("run-2");
+    expect(computer.kill).toHaveBeenCalledExactlyOnceWith("agent-2");
+    supervisor.cancelRun.mockResolvedValueOnce(undefined as never);
+    await (service as unknown as { enforceFence(runId: string): Promise<void> }).enforceFence("run-2");
+    expect(computer.kill).toHaveBeenCalledOnce();
+  });
 });
