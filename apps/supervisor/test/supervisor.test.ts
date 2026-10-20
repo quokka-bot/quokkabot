@@ -519,6 +519,16 @@ describe("supervisor logic with in-memory Docker streams", () => {
     await expect(listing).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
   });
 
+  it("forgets a stop that came and went while the request waited for the lifecycle lock", async () => {
+    await service.start(agent());
+    plans.push({ stdout: '{"op":"li', exitCode: 137 });
+    const stopping = service.stop(agent());
+    const starting = service.start(agent());
+    const listing = service.files(agent(), { op: "list", scope: "workspace", dir: "" });
+    await Promise.all([stopping, starting]);
+    await expect(listing).rejects.toMatchObject({ status: 502, code: "invalid_helper_output" });
+  });
+
   it("keeps a helper failure an error while the computer runs, and when the tools sandbox dies on its own", async () => {
     await service.start(agent());
     plans.push({ stdout: '{"op":"li', exitCode: 137 }, { stdout: "partial", exitCode: 137 });

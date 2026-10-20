@@ -464,6 +464,8 @@ export class Supervisor {
     works.add(current);
     try {
       const launched = await this.exclusive(agent, async () => {
+        // A stop or kill that came before this point is answered by the check below, never by the helper's failure.
+        current.endedBy = null;
         await this.requireTools(agent);
         return this.launch(agent, "tools", this.execBody(cmd));
       });
