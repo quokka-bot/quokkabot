@@ -62,6 +62,11 @@ beforeEach(() => {
       if (match[2]?.startsWith("/tasks?")) return json({ tasks: [], nextBefore: null });
       if (match[2] === "/logins") return json({ logins: [] });
       if (match[2] === "/connectors") return json({ connectors: [], available: { gmail: false } });
+      if (match[2] === "/ai-consent" && method === "PUT") {
+        const body = JSON.parse(String(init?.body)) as { allow: boolean };
+        item.aiConsent = { ...item.aiConsent!, state: body.allow ? "granted" : "withdrawn", allowed: body.allow, changedAt: "2026-10-20T09:00:00.000Z", changedBy: { client: "browser", deviceName: "Browser" } };
+        return json(item.aiConsent);
+      }
     }
     throw new Error(`Unexpected fetch ${method} ${path}`);
   });
@@ -117,6 +122,21 @@ describe("agent lifecycle UI", () => {
     const request = fetchMock.mock.calls.find(([url, init]) => url === `/api/agents/${agentId}/settings` && init?.method === "PUT");
     expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({ name: "Invoices" });
     await waitFor(() => expect(screen.getByRole("navigation", { name: "Agents" }).textContent).toContain("Invoices"));
+  });
+  it("turns sending to the AI provider off at once, and on only through the permission card", async () => {
+    open(`/agents/${agentId}/settings`);
+    const toggle = await screen.findByRole<HTMLInputElement>("checkbox", { name: "Send to Claude by Anthropic" });
+    expect(toggle.checked).toBe(true);
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.checked).toBe(false));
+    const off = fetchMock.mock.calls.find(([url, init]) => url === `/api/agents/${agentId}/ai-consent` && init?.method === "PUT");
+    expect(JSON.parse(String(off?.[1]?.body))).toEqual({ allow: false, provider: "anthropic" });
+    expect(await screen.findByText(/^Turned off .* in the web app on Browser\.$/)).toBeTruthy();
+    fireEvent.click(toggle);
+    expect(toggle.checked).toBe(false);
+    fireEvent.click(await screen.findByRole("button", { name: "Allow for Office" }));
+    await waitFor(() => expect(toggle.checked).toBe(true));
+    expect(screen.queryByRole("heading", { name: "Office works with Claude by Anthropic" })).toBeNull();
   });
   it("requires confirmation, removes an agent, drops its chat cache and redirects to the next agent", async () => {
     agents.push(second);

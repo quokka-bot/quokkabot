@@ -54,7 +54,7 @@ export function privacyPage(appOrigin: string, contact: string | null): string {
 <p>Quokka Bot runs on its owner's own server for the owner alone. The software sends nothing to Quokka Bot's makers, and nothing here is sold.</p>
 <h2>What the AI model sees</h2>
 <p>The agent runs Claude Code signed in with the owner's own Claude plan. Anthropic receives what the agent works with: the owner's messages and images, pages it opens, files it reads, command output and email it reads. Anthropic's terms for that plan apply. Saved passwords, 2FA codes and access tokens never reach the model.</p>
-<p>This server keeps the owner's permission to send each agent's work to Anthropic. When it is turned off, the agent's queued and running tasks stop, and nothing more is sent until the owner allows it again. Each choice is recorded with when and from which app and device; each allow also records which notice the app showed.</p>
+<p>This server keeps the owner's permission to send each agent's work to Anthropic. The owner can turn it off in any Quokka Bot app; the agent's queued and running tasks then stop, and nothing more is sent until the owner allows it again. Each choice is recorded with when and from which app and device; each allow also records which notice the app showed.</p>
 <h2>Google account data</h2>
 <p>When the owner connects Gmail, Quokka Bot receives access to that Gmail account through Google's own consent page. It uses it only to do what the owner asks the agent to do:</p>
 <ul><li>search and read messages the task needs,</li><li>create drafts, which stay in Drafts until the owner sends them.</li></ul>

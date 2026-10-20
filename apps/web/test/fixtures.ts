@@ -1,4 +1,4 @@
-import { AgentSummary, DomainRequestView, OwnerRequest, Run, Task, TaskDetail } from "@quokkabot/shared";
+import { AI_PROVIDERS, AgentSummary, AiConsentView, DomainRequestView, OwnerRequest, Run, Task, TaskDetail } from "@quokkabot/shared";
 
 export const agentId = "11111111-1111-4111-8111-111111111111";
 export const taskId = "22222222-2222-4222-8222-222222222222";
@@ -10,7 +10,9 @@ export const agent = AgentSummary.parse({
   id: agentId, name: "Office", model: "claude-opus-4-6", effort: "high", cliSignedIn: "yes",
   computer: { state: "stopped", sandboxes: [], lease: { holder: "agent", generation: 1, expiresAt: null }, attendedOpen: false, killedAt: null },
   activeTaskId: null, waitingOnOwner: 0,
+  aiConsent: { provider: "anthropic", disclosureVersion: AI_PROVIDERS.anthropic.disclosureVersion, state: "not_asked", required: false, allowed: true, changedAt: null, changedBy: null },
 });
+export const withdrawnConsent = AiConsentView.parse({ ...agent.aiConsent, state: "withdrawn", allowed: false, changedAt: at, changedBy: { client: "phone", deviceName: "Owner's iPhone" } });
 export const task = Task.parse({ id: taskId, agentId, title: "Download October invoices", state: "running", blockedReason: null, model: agent.model, effort: agent.effort, createdAt: at, updatedAt: at, result: null, error: null });
 export const run = Run.parse({ id: runId, taskId, attempt: 1, state: "running", exitCode: null, startedAt: at, endedAt: null, lastEventAt: at });
 export const ownerRequest = OwnerRequest.parse({ id: requestId, taskId, runId, kind: "question", text: "Which month should I collect?", whatToDo: null, site: null, loginName: null, loginId: null, connector: null, createdAt: at, answeredAt: null, answer: null });

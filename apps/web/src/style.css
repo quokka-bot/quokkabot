@@ -379,6 +379,9 @@ summary { min-height: 34px; cursor: pointer; font-size: 13px; font-weight: 500; 
 .claude-sign-in input { width: 100%; min-width: 0; box-sizing: border-box; }
 .claude-sign-in button { justify-self: start; }
 .claude-sign-in small { display: block; margin-top: 18px; color: var(--muted, #666); }
+.consent-card { text-align: left; }
+.consent-card h3 { margin: 0 0 8px; font-size: 17px; }
+.consent-card p { line-height: 1.5; }
 
 /* Agent slots and lifecycle dialogs. */
 .new-agent { margin: 10px 16px; text-align: left; }

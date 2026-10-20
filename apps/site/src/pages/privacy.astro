@@ -74,10 +74,10 @@ const updated = new Date(`${PRIVACY_UPDATED}T00:00:00Z`).toLocaleDateString("en-
     <ul>
       <li>
         <strong>Anthropic</strong>, for every task while the owner allows it. The agent runs Claude Code signed in with
-        the owner's Claude plan. The server keeps the owner's permission for each agent: when it is turned off, the
-        agent's queued and running tasks stop, and nothing more is sent until the owner allows it again. A server can also require the
-        owner's permission before the first task. On a server the owner installed, sending is on until they turn it off,
-        unless they set the server to require permission first.
+        the owner's Claude plan. The server keeps the owner's permission for each agent, and the owner can turn it off
+        in any of the apps: the agent's queued and running tasks stop, and nothing more is sent until the owner allows
+        it again. A server can also require the owner's permission before the first task. On a server the owner
+        installed, sending is on until they turn it off, unless they set the server to require permission first.
         Anthropic receives what the agent works with: the owner's messages and images, page text and screenshots,
         files it reads, command output, email it reads, and the names, usernames and sites of saved logins (never
         passwords or 2FA codes). Anthropic's terms and privacy policy apply, including whether it uses this data to train
@@ -114,6 +114,7 @@ const updated = new Date(`${PRIVACY_UPDATED}T00:00:00Z`).toLocaleDateString("en-
     <ul>
       <li>It connects only to the server you sign in to and keeps the sign-in in the iOS Keychain.</li>
       <li>What you write and approve in it goes to that server, which handles it as described above, Anthropic included.</li>
+      <li>Before it sends anything to an agent, it names the AI provider and asks your permission. When you allow it or turn it off, the server stores that choice, and every app you use with that server follows it.</li>
       <li>It has no analytics, advertising or tracking of its own.</li>
       <li>Apple delivers the app through the App Store under Apple's privacy policy. If you allow it in iOS Settings, Apple shares crash reports and usage statistics with us.</li>
     </ul>
