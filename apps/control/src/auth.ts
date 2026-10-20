@@ -107,7 +107,9 @@ export class Auth {
     const options = await generateRegistrationOptions({
       rpName: "Quokka Bot",
       rpID: this.rpId,
-      userName: this.config.ownerName,
+      // The passkey is labelled with the server's host: a server has one owner, so the host names the account. The
+      // owner's name is not used: the owner can change it in Settings, and a passkey's label never changes.
+      userName: this.rpId,
       userID: Buffer.from(userId, "base64url"),
       attestationType: "none",
       authenticatorSelection: { residentKey: "required", userVerification: "required" },
@@ -139,9 +141,10 @@ export class Auth {
     await withTx(this.db, async (tx) => {
       const used = await tx.query("update setup_tickets set used_at = now() where hash = $1 and used_at is null", [ticketHash]);
       if (used.rowCount !== 1) throw new HttpError(403, "setup_link_invalid", "This setup link was already used.");
+      // No name yet: the setup page asks for it after the passkey, and Settings changes it (setOwnerName).
       await tx.query(
-        "insert into owner_account (id, name, webauthn_user_id) values (1, $1, $2) on conflict (id) do nothing",
-        [this.config.ownerName, userId],
+        "insert into owner_account (id, name, webauthn_user_id) values (1, null, $1) on conflict (id) do nothing",
+        [userId],
       );
       await tx.query("insert into passkeys (id, public_key, counter, transports) values ($1, $2, $3, $4)", [
         credential.id,
@@ -319,6 +322,18 @@ export class Auth {
   async passkeyCount(): Promise<number> {
     const row = await one<{ n: number }>(this.db, "select count(*)::int as n from passkeys");
     return row.n;
+  }
+
+  // The name the owner gave at setup or in Settings; null before that.
+  async ownerName(): Promise<string | null> {
+    const row = await maybeOne<{ name: string | null }>(this.db, "select name from owner_account where id = 1");
+    return row?.name ?? null;
+  }
+
+  // name is an OwnerName (validated and normalized by the route).
+  async setOwnerName(name: string): Promise<void> {
+    const updated = await this.db.query("update owner_account set name = $1 where id = 1", [name]);
+    if (updated.rowCount !== 1) throw new HttpError(409, "not_set_up", "This server has no owner yet. Use the setup link from the server.");
   }
 
   // --- Viewer origin capability --------------------------------------------------------------------------------

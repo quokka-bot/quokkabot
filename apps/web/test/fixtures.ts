@@ -18,7 +18,7 @@ export const run = Run.parse({ id: runId, taskId, attempt: 1, state: "running", 
 export const ownerRequest = OwnerRequest.parse({ id: requestId, taskId, runId, kind: "question", text: "Which month should I collect?", whatToDo: null, site: null, loginName: null, loginId: null, connector: null, createdAt: at, answeredAt: null, answer: null });
 export const domainRequest = DomainRequestView.parse({ id: domainRequestId, taskId, domains: ["billing.example.com"], reason: "Download the invoice", createdAt: at, decidedAt: null, decision: null });
 export const detail = TaskDetail.parse({ task, runs: [run], openRequests: [], lastSeq: 0 });
-export const me = { ownerName: "Owner", passkeys: 1, freshUntil: null };
+export const me = { ownerName: "Ada", passkeys: 1, freshUntil: null };
 export const emptyDomains = { rules: [], pending: [], blocked: [] };
 export const hash = "a".repeat(64);
 

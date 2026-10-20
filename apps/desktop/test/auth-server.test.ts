@@ -12,7 +12,7 @@ function fakeServer(polls: Response[]): ServerClient & { paths: string[]; json: 
   const json = vi.fn(async (path: string) => {
     paths.push(path);
     if (path === "/api/desktop-link/start") return startResponse();
-    if (path === "/api/me") return { ownerName: "Owner", passkeys: 1, freshUntil: new Date(Date.now() + 60000).toISOString() };
+    if (path === "/api/me") return { ownerName: "", passkeys: 1, freshUntil: new Date(Date.now() + 60000).toISOString() };
     throw new Error(`Unexpected JSON path: ${path}`);
   });
   return {

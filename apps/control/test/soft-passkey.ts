@@ -37,6 +37,32 @@ export class SoftPasskey {
     ]);
   }
 
+  // A registration response ("none" attestation) for registration options returned by the server.
+  attest(options: { challenge: string }): Record<string, unknown> {
+    const rpIdHash = createHash("sha256").update(this.rpId).digest();
+    const flags = Buffer.from([0x45]); // user present, user verified, attested credential data
+    const credentialId = Buffer.from(this.id, "base64url");
+    const idLength = Buffer.alloc(2);
+    idLength.writeUInt16BE(credentialId.length);
+    const authData = Buffer.concat([rpIdHash, flags, Buffer.alloc(4), Buffer.alloc(16), idLength, credentialId, this.cosePublicKey()]);
+    const authDataLength = Buffer.alloc(2);
+    authDataLength.writeUInt16BE(authData.length);
+    // CBOR map {fmt: "none", attStmt: {}, authData}, encoded by hand.
+    const attestationObject = Buffer.concat([
+      Buffer.from([0xa3, 0x63]), Buffer.from("fmt"), Buffer.from([0x64]), Buffer.from("none"),
+      Buffer.from([0x67]), Buffer.from("attStmt"), Buffer.from([0xa0]),
+      Buffer.from([0x68]), Buffer.from("authData"), Buffer.from([0x59]), authDataLength, authData,
+    ]);
+    const clientDataJSON = Buffer.from(JSON.stringify({ type: "webauthn.create", challenge: options.challenge, origin: this.origin, crossOrigin: false }));
+    return {
+      id: this.id,
+      rawId: this.id,
+      type: "public-key",
+      response: { attestationObject: b64url(attestationObject), clientDataJSON: b64url(clientDataJSON), transports: ["internal"] },
+      clientExtensionResults: {},
+    };
+  }
+
   // An assertion for authentication options returned by the server, made on `origin` (this passkey's own by default).
   assert(options: { challenge: string }, origin = this.origin): Record<string, unknown> {
     this.counter += 1;

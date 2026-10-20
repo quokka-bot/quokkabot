@@ -1,8 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as WebBrowser from "expo-web-browser";
 import Constants from "expo-constants";
 import { useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { OwnerName, type Me } from "@quokkabot/shared";
 import { PRIVACY_URL, SUPPORT_URL } from "../src/device";
 import { useSession, useSignedIn } from "../src/session";
 import { Button, ErrorLine } from "../src/ui/kit";
@@ -28,6 +29,7 @@ export default function Settings() {
     <Section title="Server">
       <Row label={new URL(connection.origin).host} />
     </Section>
+    <OwnerNameSection />
     <Section title="Signed-in devices">
       {devices.data?.sessions.map((device) => <Row key={device.id} label={device.deviceName} detail={device.current ? "This phone" : device.client === "phone" ? "iPhone app" : device.client === "desktop" ? "Mac app" : "Web app"} />)}
       <ErrorLine error={devices.error} />
@@ -43,6 +45,50 @@ export default function Settings() {
     <Button title="Sign out of this phone" kind="light" busy={busy} onPress={leave} />
     <ErrorLine error={error} />
   </ScrollView>;
+}
+
+// The owner's name, the same one the web and Mac apps show and change.
+function OwnerNameSection() {
+  const { api, connection } = useSignedIn();
+  const client = useQueryClient();
+  const me = useQuery({ queryKey: [connection.origin, "me"], queryFn: api.me });
+  return <Section title="Your name">
+    {me.isPending ? <Text style={styles.help}>Loading your name…</Text> : me.data ? <OwnerNameForm initial={me.data.ownerName} save={async (name) => {
+      const saved = await api.setOwnerName(name);
+      // A read that started before the save must not put the old name back.
+      await client.cancelQueries({ queryKey: [connection.origin, "me"] });
+      client.setQueryData<Me>([connection.origin, "me"], saved);
+      return saved.ownerName;
+    }} /> : <ErrorLine error={me.error} />}
+  </Section>;
+}
+
+function OwnerNameForm({ initial, save }: { initial: string; save: (name: string) => Promise<string> }) {
+  const [value, setValue] = useState(initial);
+  // A name another device saved replaces the field's text when the owner has not edited it.
+  const [stored, setStored] = useState(initial);
+  if (initial !== stored) {
+    setStored(initial);
+    if (value === stored) setValue(initial);
+  }
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const submit = async () => {
+    if (busy) return;
+    const parsed = OwnerName.safeParse(value);
+    setSaved(false);
+    if (!parsed.success) { setError(new Error(parsed.error.issues[0]?.message ?? "Enter your name.")); return; }
+    setBusy(true); setError(null);
+    try { setValue(await save(parsed.data)); setSaved(true); } catch (failure) { setError(failure); } finally { setBusy(false); }
+  };
+  return <View style={styles.nameForm}>
+    <TextInput style={styles.input} value={value} onChangeText={(text) => { setValue(text); setSaved(false); }} editable={!busy} placeholder="Your name" autoComplete="name"
+      textContentType="name" returnKeyType="done" onSubmitEditing={() => void submit()} accessibilityLabel="Your name" />
+    <Button title="Save name" kind="light" busy={busy} disabled={value.trim() === ""} onPress={() => void submit()} />
+    {saved && <Text accessibilityRole="text" style={styles.help}>Name saved.</Text>}
+    <ErrorLine error={error} />
+  </View>;
 }
 
 export function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -71,4 +117,6 @@ const styles = StyleSheet.create({
   rowDetail: { fontSize: 15, color: colors.muted },
   chevron: { fontSize: 22, color: colors.muted },
   help: { fontSize: 13, color: colors.muted, paddingVertical: 10 },
+  nameForm: { gap: 10, paddingVertical: 12 },
+  input: { minHeight: 44, borderWidth: 1, borderColor: colors.line, borderRadius: 10, paddingHorizontal: 12, fontSize: 16, backgroundColor: colors.background, color: colors.text },
 });

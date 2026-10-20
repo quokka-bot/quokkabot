@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { AgentSummary, AuditVerification, EmptyResponse, FreshAuth, InboxResponse, SafeFileListing, TaskPage, WebAuthnAuthenticationOptions, WebAuthnRegistrationOptions } from "../src/api.js";
+import { z } from "zod";
+import { AgentSummary, AuditVerification, EmptyResponse, FreshAuth, InboxResponse, Me, OwnerNameRequest, SafeFileListing, TaskPage, WebAuthnAuthenticationOptions, WebAuthnRegistrationOptions } from "../src/api.js";
 
 const oldSummary = {
   id: "11111111-1111-4111-8111-111111111111", name: "Office", model: "claude-opus-4-6", effort: "high", cliSignedIn: "no",
@@ -57,5 +58,49 @@ describe("owner API response schemas", () => {
       expect(result.success).toBe(false);
       if (!result.success) expect(result.error.issues[0]?.path).toEqual(["entries", 0, "path"]);
     }
+  });
+});
+
+describe("owner name", () => {
+  it.each([
+    ["Robin", "Robin"],
+    ["  Robin   Example  ", "Robin Example"],
+    ["Ąžuolas", "Ąžuolas"],
+    ["E\u0301mile", "Émile"],
+    ["👩‍💻 Kim", "👩‍💻 Kim"],
+    ["R".repeat(80), "R".repeat(80)],
+    ["😀".repeat(80), "😀".repeat(80)],
+  ])("accepts %j as %j", (input, stored) => {
+    expect(OwnerNameRequest.parse({ ownerName: input })).toEqual({ ownerName: stored });
+  });
+
+  it.each([
+    ["", "Enter your name."],
+    ["   ", "Enter your name."],
+    ["R".repeat(81), "Use at most 80 characters."],
+    ["Robin\nExample", "Remove the line breaks and hidden characters from the name."],
+    ["Robin\tExample", "Remove the line breaks and hidden characters from the name."],
+    ["Rob\u0000in", "Remove the line breaks and hidden characters from the name."],
+    ["Rob\u200bin", "Remove the line breaks and hidden characters from the name."],
+    ["\u202eniboR", "Remove the line breaks and hidden characters from the name."],
+    ["\u061cRobin", "Remove the line breaks and hidden characters from the name."],
+    ["\u061c", "Remove the line breaks and hidden characters from the name."],
+    ["Rob\u2028in", "Remove the line breaks and hidden characters from the name."],
+    ["Rob\ud800in", "Remove the line breaks and hidden characters from the name."],
+    ["Rob\udc00in", "Remove the line breaks and hidden characters from the name."],
+  ])("refuses %j", (input, message) => {
+    const result = OwnerNameRequest.safeParse({ ownerName: input });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toBe(message);
+  });
+
+  it("takes only the name", () => {
+    expect(OwnerNameRequest.safeParse({ ownerName: "Robin", admin: true }).success).toBe(false);
+  });
+
+  it("keeps the /api/me shape the Mac app 0.2.1 and older iPhone builds parse", () => {
+    // The Me schema those builds shipped with: ownerName is a required string.
+    const shipped = z.object({ ownerName: z.string(), passkeys: z.number().int(), freshUntil: z.string().nullable() });
+    for (const ownerName of ["", "Robin"]) expect(shipped.safeParse(Me.parse({ ownerName, passkeys: 1, freshUntil: null })).success).toBe(true);
   });
 });

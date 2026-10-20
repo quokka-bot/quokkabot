@@ -33,11 +33,46 @@ export type ApiError = z.infer<typeof ApiError>;
 // POST /api/auth/fresh/options, /api/auth/fresh/verify -> { freshUntil } (re-check for terminal and kill release)
 // POST /api/auth/logout
 // GET  /api/me                                     -> Me (401 when signed out)
+// PUT  /api/me              { ownerName }         -> Me (the owner's name, from setup or Settings)
 export const SetupOptionsRequest = z.object({ ticket: z.string().min(32).max(200) }).strict();
 export const SetupVerifyRequest = z.object({ ticket: z.string().min(32).max(200), response: z.unknown() }).strict();
 export const AuthVerifyRequest = z.object({ response: z.unknown() }).strict();
+// ownerName is "" until the owner gives a name. It stays a string, never null, because the Mac app 0.2.1 and older
+// iPhone builds parse /api/me with ownerName as a required string.
 export const Me = z.object({ ownerName: z.string(), passkeys: z.number().int(), freshUntil: z.string().nullable() });
 export type Me = z.infer<typeof Me>;
+
+export const OWNER_NAME_MAX = 80;
+// Line breaks, controls, invisible characters and lone surrogates. Checked by code unit, with no Unicode property
+// escapes or Intl.Segmenter, so the iPhone app's JavaScript engine applies the same rule as the server.
+function hasHiddenCharacter(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const unit = value.charCodeAt(i);
+    if (unit <= 0x1f || (unit >= 0x7f && unit <= 0x9f)) return true;
+    // Zero-width space, direction marks (Arabic letter mark, left-to-right and right-to-left marks), line and paragraph
+    // separators, direction embeddings, overrides and isolates, byte order mark. Joiners (U+200C, U+200D) stay: scripts
+    // and emoji need them.
+    if (unit === 0x061c || unit === 0x200b || unit === 0x200e || unit === 0x200f || unit === 0x2028 || unit === 0x2029 || unit === 0xfeff) return true;
+    if ((unit >= 0x202a && unit <= 0x202e) || (unit >= 0x2066 && unit <= 0x2069)) return true;
+    if (unit >= 0xdc00 && unit <= 0xdfff) return true;
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      i += 1;
+    }
+  }
+  return false;
+}
+// The owner's name as the owner typed it: composed (NFC), spaces trimmed and runs of spaces made one, 1 to 80
+// characters.
+export const OwnerName = z.string()
+  .max(OWNER_NAME_MAX * 4, `Use at most ${OWNER_NAME_MAX} characters.`)
+  .refine((value) => !hasHiddenCharacter(value), "Remove the line breaks and hidden characters from the name.")
+  .transform((value) => value.normalize("NFC").replace(/\s+/g, " ").trim())
+  .pipe(z.string()
+    .min(1, "Enter your name.")
+    .refine((value) => [...value].length <= OWNER_NAME_MAX, `Use at most ${OWNER_NAME_MAX} characters.`));
+export const OwnerNameRequest = z.object({ ownerName: OwnerName }).strict();
 
 const CredentialDescriptor = z.object({
   id: z.string().min(1), type: z.literal("public-key"),

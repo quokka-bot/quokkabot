@@ -16,6 +16,7 @@ import { Logins } from "./logins.js";
 import { Settings } from "./settings.js";
 import { NewAgentDialog, NewAgentForm } from "./agent-dialog.js";
 import { AgentNameHeading } from "./agent-name.js";
+import { OwnerAvatarContent } from "./owner.js";
 import { ErrorLine, Status, stateLabel, useAction, usePollInterval } from "./ui.js";
 
 // The window: agents on the left, the selected agent's chat (or one of its screens) in the middle, its details on the
@@ -57,7 +58,7 @@ function Sidebar() {
     {adding && agents.data && <NewAgentDialog data={agents.data} onClose={() => setAdding(false)} />}
     <DesktopUpdateNotice />
     <div className="sidebar-bottom">
-      <NavLink to="/settings" className="owner-avatar" aria-label="Settings" title="Settings">{(me.data?.ownerName ?? "?").slice(0, 1).toUpperCase()}</NavLink>
+      <NavLink to="/settings" className="owner-avatar" aria-label="Settings" title="Settings"><OwnerAvatarContent name={me.data?.ownerName} /></NavLink>
       {appsFor ? <NavLink to={`/agents/${appsFor}/apps`} className="pill">Connect apps <GmailIcon /></NavLink> : <NavLink to="/settings" className="pill">Settings</NavLink>}
     </div>
   </aside>;

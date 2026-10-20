@@ -695,7 +695,6 @@ slots = list(enumerate(env["AGENT_IDS"].split(","), start=1))
 control = {
     "appOrigin": env["APP_ORIGIN"],
     "viewOrigin": env["VIEW_ORIGIN"],
-    "ownerName": "Owner",
     **({"publicContact": env["PUBLIC_CONTACT"]} if env.get("PUBLIC_CONTACT") else {}),
     **({"appleAppIds": [i.strip() for i in env["APPLE_APP_IDS"].split(",") if i.strip()]} if env.get("APPLE_APP_IDS") else {}),
     "dataRoot": "/data",

@@ -33,6 +33,7 @@ import {
   ReactionRequest,
   SaveLoginRequest,
   UpdateLoginRequest,
+  OwnerNameRequest,
   SetupOptionsRequest,
   SetupVerifyRequest,
   TakeoverDoneRequest,
@@ -400,12 +401,21 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
 
   async function me(session?: SessionInfo | null): Promise<unknown> {
     return {
-      ownerName: config.ownerName,
+      // "" until the owner gives a name (Me in packages/shared says why it is never null).
+      ownerName: (await auth.ownerName()) ?? "",
       passkeys: await auth.passkeyCount(),
       freshUntil: session?.freshUntil?.toISOString() ?? null,
     };
   }
   app.get("/api/me", appRoute, async (request) => me(await requireSession(request)));
+  // The owner's name, from the setup page after the passkey and from Settings in any app. Like every change, it needs
+  // the owner's session and the app's own Origin (or the phone's bearer token); the agent has neither.
+  app.put("/api/me", appRoute, async (request) => {
+    const session = await requireSession(request);
+    const { ownerName } = parse(OwnerNameRequest, request.body);
+    await auth.setOwnerName(ownerName);
+    return me(session);
+  });
 
   // --- Desktop app ---------------------------------------------------------------------------------------------------
 

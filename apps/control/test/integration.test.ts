@@ -23,6 +23,7 @@ import { SoftPasskey } from "./soft-passkey.js";
 import { parseTotp, totpCode } from "../src/vault.js";
 import type { ControlConfig } from "../src/config.js";
 import { TaskEvents } from "../src/events.js";
+import { migrateOwnerName } from "../src/db.js";
 
 const enabled = process.env.QB_INTEGRATION === "1";
 const AGENT = "6f1c1d2e-8f4b-4c55-9a59-0d7a7f6f3a10";
@@ -283,7 +284,6 @@ describe.skipIf(!enabled)("control plane end to end", () => {
       viewOrigin: `http://view.localhost:${appPort}`,
       appHost: `localhost:${appPort}`,
       viewHost: `view.localhost:${appPort}`,
-      ownerName: "Owner",
       appleAppIds: ["ABCDE12345.com.example.quokkabot"],
       dataRoot: "/data",
       secretsDir: "/run/secrets",
@@ -315,8 +315,8 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     await db.query("insert into sessions (hash, expires_at, fresh_until) values ($1, now() + interval '1 day', now() + interval '5 minutes')", [sha256Hex(sessionToken)]);
     passkey = new SoftPasskey("localhost", `http://localhost:${appPort}`);
     await passkey.register(db);
-    // The owner, as setup records it with the first passkey.
-    await db.query("insert into owner_account (id, name, webauthn_user_id) values (1, 'Owner', $1) on conflict do nothing", [randomBytes(32).toString("base64url")]);
+    // The owner, as setup records it with the first passkey: no name until the owner gives one.
+    await db.query("insert into owner_account (id, name, webauthn_user_id) values (1, null, $1) on conflict do nothing", [randomBytes(32).toString("base64url")]);
   }, 120_000);
 
   afterAll(async () => {
@@ -1417,6 +1417,75 @@ describe.skipIf(!enabled)("control plane end to end", () => {
     return { token, id: sha256Hex(token).slice(0, 16) };
   }
   const bearer = (token: string): Record<string, string> => ({ authorization: `Bearer ${token}` });
+
+  it("keeps the owner's name, which only the owner's own sessions read and change", async () => {
+    const stored = async () => (await db.query<{ name: string | null }>("select name from owner_account where id = 1")).rows[0]!.name;
+    expect(await stored()).toBeNull();
+    expect((await api("GET", "/api/me")).body).toMatchObject({ ownerName: "" });
+    const saved = await api("PUT", "/api/me", { ownerName: "  Robin   Example " });
+    expect(saved).toMatchObject({ status: 200, body: { ownerName: "Robin Example", passkeys: 1 } });
+    expect(await stored()).toBe("Robin Example");
+    // Another device reads it, and the phone changes it with its token and no Origin.
+    const phone = await phoneSession();
+    expect((await api("GET", "/api/me", undefined, { cookie: false, origin: null, headers: bearer(phone.token) })).body.ownerName).toBe("Robin Example");
+    expect((await api("PUT", "/api/me", { ownerName: "Robin" }, { cookie: false, origin: null, headers: bearer(phone.token) })).body.ownerName).toBe("Robin");
+    // Without the owner's session, from another origin or host, or with an invalid name, nothing changes.
+    const refused = [
+      await api("PUT", "/api/me", { ownerName: "Mallory" }, { cookie: false }),
+      await api("PUT", "/api/me", { ownerName: "Mallory" }, { origin: null }),
+      await api("PUT", "/api/me", { ownerName: "Mallory" }, { origin: `http://view.localhost:${appPort}` }),
+      await api("PUT", "/api/me", { ownerName: "Mallory" }, { host: `view.localhost:${appPort}`, origin: `http://view.localhost:${appPort}` }),
+      await api("PUT", "/api/me", { ownerName: "Mallory" }, { cookie: false, origin: null, headers: bearer(secret()) }),
+      await api("PUT", "/api/me", { ownerName: "Mal\nlory" }),
+      await api("GET", "/api/me", undefined, { cookie: false }),
+    ];
+    expect(refused.map((response) => response.status)).toEqual([401, 403, 403, 404, 401, 400, 401]);
+    expect(JSON.stringify(refused.map((response) => response.body))).not.toContain("Robin");
+    expect(await stored()).toBe("Robin");
+    // The name never reaches the audit log.
+    expect(JSON.stringify((await db.query("select data from audit_events")).rows)).not.toContain("Robin");
+  });
+
+  it("clears the installer's placeholder name on upgrade, keeps a name the owner gave and runs with no owner yet", async () => {
+    const { host, port, name, ownerUser } = controlConfig.database;
+    const owner = new pg.Pool({ host, port, user: ownerUser, password: controlConfig.secrets.dbOwnerPassword, database: name });
+    try {
+      for (const [stored, migrated] of [["Owner", null], ["", null], ["  Robin  ", "Robin"], ["Robin\nExample", null], [undefined, undefined]] as const) {
+        const tx = await owner.connect();
+        try {
+          await tx.query("begin");
+          // owner_account as it was before migration 22.
+          await tx.query("alter table owner_account drop constraint owner_account_name_check");
+          if (stored === undefined) await tx.query("delete from owner_account");
+          else await tx.query("update owner_account set name = $1 where id = 1", [stored]);
+          await tx.query("alter table owner_account alter column name set not null");
+          await migrateOwnerName(tx);
+          expect((await tx.query("select name from owner_account where id = 1")).rows[0]?.name).toBe(migrated);
+          await tx.query("savepoint empty");
+          await expect(tx.query("insert into owner_account (id, name, webauthn_user_id) values (1, '', 'x') on conflict (id) do update set name = ''")).rejects.toThrow(/owner_account_name_check/);
+          await tx.query("rollback to savepoint empty");
+          await tx.query("update owner_account set name = null where id = 1");
+        } finally { await tx.query("rollback"); tx.release(); }
+      }
+    } finally { await owner.end(); }
+  });
+
+  it("labels a setup passkey with the server's host and keeps the owner's name and account through a later setup link", async () => {
+    expect((await api("PUT", "/api/me", { ownerName: "Robin" })).status).toBe(200);
+    const before = (await db.query<{ name: string | null; webauthn_user_id: string }>("select name, webauthn_user_id from owner_account where id = 1")).rows[0]!;
+    expect(before.name).not.toBeNull();
+    const operator = new Auth(db, controlConfig, new AuditLog(db, controlConfig.secrets.auditHmacKey), () => [AGENT]);
+    const ticket = new URL(await operator.createSetupLink()).hash.slice(1);
+    const options = await api("POST", "/api/setup/options", { ticket }, { cookie: false });
+    expect(options.status).toBe(200);
+    expect(options.body.user).toMatchObject({ name: "localhost", id: before.webauthn_user_id });
+    const challenge = /qb_challenge=([^;]+)/.exec(options.setCookie.join(";"))?.[1];
+    const device = new SoftPasskey("localhost", `http://localhost:${appPort}`);
+    const verified = await api("POST", "/api/setup/verify", { ticket, response: device.attest(options.body) }, { cookie: false, extraCookie: `qb_challenge=${challenge}` });
+    expect(verified).toMatchObject({ status: 200, body: { ownerName: before.name } });
+    expect((await db.query("select name, webauthn_user_id from owner_account where id = 1")).rows[0]).toEqual(before);
+    await db.query("delete from passkeys where id = $1", [device.id]);
+  });
 
   it("accepts a phone's bearer token without an Origin and only that way", async () => {
     const phone = await phoneSession();

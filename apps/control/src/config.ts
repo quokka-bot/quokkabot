@@ -14,7 +14,6 @@ export const ControlConfigFile = z
   .object({
     appOrigin: z.url().refine(isAllowedOrigin, "an https origin (http only for *.localhost in development)"),
     viewOrigin: z.url().refine(isAllowedOrigin, "an https origin (http only for *.localhost in development)"),
-    ownerName: z.string().min(1).max(80),
     // Optional contact address shown on the public About and Privacy pages.
     publicContact: z.email().optional(),
     // iPhone app builds allowed to use native passkeys on this domain ("<team id>.<bundle id>"), served in

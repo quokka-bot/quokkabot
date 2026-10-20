@@ -9,6 +9,7 @@ import { storeAgent } from "./agent-name.js";
 import { AiConsentSetting } from "./ai-consent.js";
 import { ClaudeSetting } from "./claude-sign-in.js";
 import { LINK_CODE_KEY } from "./link.js";
+import { OwnerNameSetting } from "./owner.js";
 import { dateLabel, ErrorLine, useAction, usePollInterval } from "./ui.js";
 
 const CLIENT_LABELS: Record<SessionView["client"], string> = { browser: "Web app", desktop: "Mac app", phone: "iPhone app" };
@@ -95,7 +96,7 @@ export function ConnectPhone() {
 }
 
 export function OwnerSettings() {
-  return <><ClaudeSetting /><Devices /><ConnectPhone />{window.quokkabotDesktop && <DesktopSettings />}</>;
+  return <><OwnerNameSetting /><ClaudeSetting /><Devices /><ConnectPhone />{window.quokkabotDesktop && <DesktopSettings />}</>;
 }
 
 export function Settings({ agent }: { agent: AgentSummary }) {

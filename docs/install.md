@@ -87,7 +87,7 @@ QUOKKABOT_DOMAIN=quokkabot.example.com QUOKKABOT_VIEW_DOMAIN=view.quokkabot.exam
 Add `--setup-volume <device>` on the first run if the volume is not set up yet. The script is idempotent: run it
 again after changing the source or the settings. A run with nothing changed rebuilds from cache, keeps every
 container running and changes no file. It ends by printing a one-time setup link (valid 30 minutes); open it on
-the device that will hold your passkey.
+the device that will hold your passkey. The setup page creates the passkey, then asks your name.
 
 ### Agent slots
 
