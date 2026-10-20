@@ -3,6 +3,7 @@ import type http from "node:http";
 import type { Logger } from "pino";
 import { AuditLog } from "./audit.js";
 import { AgentSlots } from "./agents.js";
+import { AiConsents } from "./consent.js";
 import { Auth } from "./auth.js";
 import { BrowserServiceClient, EgressClient, SelkiesClient, SupervisorClient } from "./clients.js";
 import { type AgentHandles, ComputerService } from "./computer.js";
@@ -82,7 +83,8 @@ export async function startControl(config: ControlConfig, log: Logger, webRoot: 
   void policy.runDecisionLoop();
 
   const computer = new ComputerService(db, supervisor, egress, policy, audit, handles, log, slots);
-  const tasks = new TaskService(db, events, audit, supervisor, computer, policy, log, agentIds, slots);
+  const consents = new AiConsents(db, config, audit);
+  const tasks = new TaskService(db, events, audit, supervisor, computer, policy, log, agentIds, consents, slots);
   const broker = new FileBroker(db, audit, events, log);
   for (const agent of config.agents) await broker.cleanIncoming(agent.downloadsDir);
 
@@ -114,6 +116,7 @@ export async function startControl(config: ControlConfig, log: Logger, webRoot: 
     db,
     auth,
     audit,
+    consents,
     tasks,
     events,
     computer,

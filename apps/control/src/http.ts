@@ -6,6 +6,7 @@ import type { Duplex } from "node:stream";
 import { join, normalize } from "node:path";
 import {
   AddDomainRuleRequest,
+  AiConsentRequest,
   AgentSettingsRequest,
   CreateAgentRequest,
   type AgentSummary,
@@ -48,6 +49,7 @@ import type { z } from "zod";
 import { attachmentContent, attachmentHeaders, uploadAttachment } from "./attachments.js";
 import type { AuditLog } from "./audit.js";
 import type { AgentSlots } from "./agents.js";
+import type { AiConsents } from "./consent.js";
 import { Auth, CHALLENGE_COOKIE, KILL_COOKIE, SESSION_COOKIE, type SessionInfo, VIEW_COOKIE, isFresh, killCapability, killCapabilityValid } from "./auth.js";
 import { UpstreamError, type SupervisorClient } from "./clients.js";
 import type { AgentHandles, ComputerService } from "./computer.js";
@@ -75,6 +77,7 @@ export interface HttpDeps {
   db: Db;
   auth: Auth;
   audit: AuditLog;
+  consents: AiConsents;
   tasks: TaskService;
   events: TaskEvents;
   computer: ComputerService;
@@ -129,7 +132,7 @@ declare module "fastify" {
 }
 
 export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstance; server: http.Server }> {
-  const { config, slots, db, auth, tasks, events, computer, policy, supervisor, handles, log, audit, desktopLinks, pairingCodes, vault, connectors } = deps;
+  const { config, slots, db, auth, consents, tasks, events, computer, policy, supervisor, handles, log, audit, desktopLinks, pairingCodes, vault, connectors } = deps;
   // Fastify ignores its serializers option when loggerInstance is supplied, so enforce it on the child logger.
   const requestLog = log.child({}, { serializers: { req: serializeRequest } });
   const app = Fastify({ loggerInstance: requestLog as never, trustProxy: true, bodyLimit: 1024 * 1024 }) as unknown as FastifyInstance;
@@ -639,6 +642,7 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
       computer: await computer.view(agentId),
       activeTaskId: (active?.id ?? null) as AgentSummary["activeTaskId"],
       waitingOnOwner: Number(waiting.n),
+      aiConsent: await consents.view(db, agentId),
     };
   }
 
@@ -674,6 +678,21 @@ export async function buildServer(deps: HttpDeps): Promise<{ app: FastifyInstanc
     await db.query("update agents set model = $2, effort = $3, name = coalesce($4, name) where id = $1", [agentId, body.model, body.effort, body.name ?? null]);
     await audit.append(agentId, "owner", "agent.settings_changed", { ...body });
     return agentSummary(agentId);
+  });
+  // The owner's permission to send this agent's work to its AI provider, shared by every app. Withdrawing stops the
+  // agent's queued and running tasks before the reply returns.
+  app.get<{ Params: { agentId: string } }>("/api/agents/:agentId/ai-consent", appRoute, async (request) => {
+    await requireSession(request);
+    return consents.view(db, await agentParam(request.params.agentId));
+  });
+  app.put<{ Params: { agentId: string } }>("/api/agents/:agentId/ai-consent", appRoute, async (request) => {
+    const session = await requireSession(request);
+    const agentId = await agentParam(request.params.agentId);
+    const body = parse(AiConsentRequest, request.body);
+    // The agent's slot lock, taken for every change before the handler, also keeps dispatch out until this returns.
+    const { view, withdrawn } = await consents.decide(agentId, body, session);
+    if (withdrawn) await tasks.stopWithoutConsent(agentId);
+    return view;
   });
   app.post<{ Params: { agentId: string } }>("/api/agents/:agentId/computer/start", appRoute, async (request) => {
     await requireSession(request);

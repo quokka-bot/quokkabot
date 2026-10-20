@@ -10,6 +10,7 @@ import {
   type TaskEvent,
   TERMINAL_TASK_STATES,
   type TaskState,
+  aiConsentStopped,
   siteLabel,
   hostMatchesPattern,
 } from "@quokkabot/shared";
@@ -22,6 +23,7 @@ import { ClaudeStreamParser, type ParsedResult, classifyExit } from "./claude-ad
 import type { SupervisorClient } from "./clients.js";
 import { UpstreamError } from "./clients.js";
 import type { ComputerService } from "./computer.js";
+import type { AiConsents } from "./consent.js";
 import { type Db, many, maybeOne, one, withTx } from "./db.js";
 import { HttpError } from "./errors.js";
 import type { TaskEvents } from "./events.js";
@@ -154,6 +156,7 @@ export class TaskService {
     private readonly policy: PolicyService,
     private readonly log: Logger,
     private readonly agentIds: () => string[] | Promise<string[]>,
+    private readonly consents: AiConsents,
     private readonly slots?: AgentSlots,
   ) {}
 
@@ -213,6 +216,7 @@ export class TaskService {
         await tx.query("delete from task_creation_keys where expires_at <= now()");
       }
       if (agent.killed_at) throw new HttpError(409, "killed", "The kill switch is on. Release it first.");
+      await this.consents.require(tx, agentId);
       const id = randomUUID();
       const created = await one<TaskRow>(
         tx,
@@ -245,6 +249,7 @@ export class TaskService {
   async reply(taskId: string, text: string, attachmentIds: string[] = []): Promise<TaskRow> {
     const task = await this.get(taskId);
     const resolved = await withTx(this.db, async (tx) => {
+      await this.consents.require(tx, task.agent_id);
       // UPDATE rechecks answered_at after waiting for a competing reply, so only the winner appends a message.
       const answered = await many<OwnerRequestRow>(tx,
         "update owner_requests set answered_at = now(), answer = $2 where task_id = $1 and answered_at is null returning *",
@@ -304,6 +309,7 @@ export class TaskService {
       note ? ` Their note: ${note}` : ""
     } Take a fresh snapshot before you continue.`;
     const updated = await withTx(this.db, async (tx) => {
+      await this.consents.require(tx, task.agent_id);
       await tx.query("update owner_requests set answered_at = now(), answer = $2 where id = $1", [request.id, note || "done"]);
       if (note) await this.events.append(tx, taskId, { kind: "owner_message", text: note, attachments: [] });
       const row = await one<TaskRow>(
@@ -333,6 +339,7 @@ export class TaskService {
       `The owner now says:\n${text}`,
     ].join("\n\n");
     const updated = await withTx(this.db, async (tx) => {
+      await this.consents.require(tx, task.agent_id);
       const locked = await one<TaskRow>(tx, "select * from tasks where id = $1 for update", [taskId]);
       if (!TERMINAL_TASK_STATES.has(locked.state)) throw new HttpError(409, "task_active", "The task is still running.");
       const attachments = await bindAttachments(tx, task.agent_id, taskId, attachmentIds);
@@ -434,6 +441,15 @@ export class TaskService {
   }
 
   private async dispatchAgent(agentId: string): Promise<void> {
+    const agent = await maybeOne<{ killed_at: Date | null; lease_holder: string }>(this.db, "select killed_at, lease_holder from agents where id = $1 and added_at is not null and removing_at is null", [agentId]);
+    if (!agent || agent.killed_at) return;
+    // A withdrawn permission stops everything the agent has queued or running, whichever app queued it. Withdrawing
+    // does this at once; dispatch repeats it so a withdrawal that crashed half-way is still enforced.
+    const consent = await this.consents.view(this.db, agentId);
+    if (consent.state === "withdrawn") {
+      await this.stopWithoutConsent(agentId);
+      return;
+    }
     // A run that ended but is not finalized still decides its task's next state; the next run waits for it, or both
     // would act on the task at once (the old finalizer completing a task its successor is working on).
     const active = await maybeOne(
@@ -442,8 +458,6 @@ export class TaskService {
       [agentId],
     );
     if (active) return;
-    const agent = await maybeOne<{ killed_at: Date | null; lease_holder: string }>(this.db, "select killed_at, lease_holder from agents where id = $1 and added_at is not null and removing_at is null", [agentId]);
-    if (!agent || agent.killed_at) return;
     // While the owner holds the browser, nothing new starts; the owner hands it back first.
     if (agent.lease_holder === "owner") return;
     const task = await maybeOne<TaskRow>(
@@ -451,7 +465,13 @@ export class TaskService {
       "select * from tasks where agent_id = $1 and pending_prompt is not null and state in ('queued','running') order by updated_at limit 1",
       [agentId],
     );
-    if (task) await this.startRun(task);
+    if (!task) return;
+    // Never asked on a server that requires it: the task ends before the computer starts or the agent gets the lease.
+    if (!consent.allowed) {
+      await this.finishTask(task, "cancelled", null, aiConsentStopped(consent.state));
+      return;
+    }
+    await this.startRun(task);
   }
 
   private async startRun(task: TaskRow): Promise<void> {
@@ -472,6 +492,10 @@ export class TaskService {
     const prepared = await withTx(this.db, async (tx) => {
       const current = await one<TaskRow>(tx, "select * from tasks where id = $1 for update", [task.id]);
       if (current.pending_prompt === null || TERMINAL_TASK_STATES.has(current.state)) return null;
+      // No consent, no run: checked with the agent row held shared, so a withdrawal waits for this transaction and
+      // then sees the run it must stop.
+      const consent = await this.consents.view(tx, task.agent_id, "share");
+      if (!consent.allowed) return { refused: consent.state };
       const attachments = await runAttachments(tx, current.id, current.pending_attachment_ids);
       const prompt = current.pending_prompt + (attachments.length > 0 ? `\n\nOwner images saved in your workspace: ${attachments.map(attachmentPath).join(", ")}` : "");
       const attempt = await one<{ n: number }>(tx, "select count(*)::int + 1 as n from runs where task_id = $1", [task.id]);
@@ -487,9 +511,21 @@ export class TaskService {
       return { run, task: current, prompt, attachments };
     });
     if (prepared === null) return;
+    if ("refused" in prepared) {
+      // The permission went between the check above and this transaction: the computer started for nothing.
+      await this.computer.setLease(task.agent_id, "paused", "system").catch((error: unknown) => this.log.warn({ err: String(error) }, "pausing the lease failed"));
+      if (prepared.refused === "withdrawn") await this.stopWithoutConsent(task.agent_id);
+      else await this.finishTask(await this.get(task.id), "cancelled", null, aiConsentStopped(prepared.refused));
+      return;
+    }
     const { run, attachments } = prepared;
     task = prepared.task;
     await this.policy.push().catch((error: unknown) => this.log.warn({ err: String(error) }, "policy push failed"));
+    // A withdrawal between the transaction above and here fenced the run: it never reaches the CLI.
+    if (await this.consentFenced(runId)) {
+      await this.finalizeRun(runId, null, null, "", "cancelled");
+      return;
+    }
     try {
       for (const attachment of attachments) {
         await this.supervisor.writeWorkspaceFile(task.agent_id, attachmentPath(attachment), attachment.data);
@@ -515,8 +551,42 @@ export class TaskService {
     }
     await this.db.query("update runs set state = 'running' where id = $1 and state = 'starting'", [runId]);
     await this.db.query("update tasks set session_started = true where id = $1", [task.id]);
+    // A withdrawal while the CLI was starting could not cancel it yet; stop it now. The watcher ends the task.
+    if (await this.consentFenced(runId)) await this.supervisor.cancelRun(runId).catch((error: unknown) => this.log.warn({ err: String(error), runId }, "cancelling a run without consent failed"));
     await this.audit.append(task.agent_id, "system", "run.started", { taskId: task.id, runId, attempt: run.attempt, resume: run.resume });
     this.watch({ ...run, state: "running" });
+  }
+
+  private async consentFenced(runId: string): Promise<boolean> {
+    const row = await maybeOne<{ fence_reason: string | null }>(this.db, "select fence_reason from runs where id = $1", [runId]);
+    return row?.fence_reason === "ai_consent";
+  }
+
+  // Ends everything an agent has queued or running once its permission to send to the AI provider is withdrawn:
+  // active runs are fenced (their tool token revoked) and cancelled, every other open task ends. Runs that are still
+  // starting are left to startRun, which checks the fence before and after it starts the CLI.
+  async stopWithoutConsent(agentId: string): Promise<void> {
+    const stopped = await withTx(this.db, async (tx) => {
+      const consent = await this.consents.view(tx, agentId, "share");
+      if (consent.state !== "withdrawn") return null;
+      const runs = await many<RunRow>(tx,
+        `update runs set fence_reason = 'ai_consent', fenced_at = coalesce(fenced_at, now()), token_revoked = true
+         where agent_id = $1 and state in ('starting','running') and not diagnostic and fence_reason is distinct from 'ai_consent'
+         returning *`, [agentId]);
+      const idle = await many<TaskRow>(tx,
+        `select * from tasks t where agent_id = $1 and state in ('queued','running')
+         and not exists (select 1 from runs r where r.task_id = t.id and r.state in ('starting','running'))`, [agentId]);
+      return { runs, idle };
+    });
+    if (stopped === null) return;
+    for (const run of stopped.runs) {
+      if (run.state !== "running") continue;
+      await this.supervisor.cancelRun(run.id).catch((error: unknown) => {
+        if (!(error instanceof UpstreamError && error.status === 404)) this.log.warn({ err: String(error), runId: run.id }, "cancelling a run without consent failed");
+      });
+      this.watch(run);
+    }
+    for (const task of stopped.idle) await this.finishTask(task, "cancelled", null, aiConsentStopped("withdrawn"));
   }
 
   // --- Watching a run's output ------------------------------------------------------------------------------------
@@ -610,6 +680,18 @@ export class TaskService {
   private async enforceFence(runId: string): Promise<void> {
     const run = await maybeOne<RunRow>(this.db, "select * from runs where id = $1", [runId]);
     if (!run?.fenced_at || run.fence_reason === "cancelled") return;
+    // A run stopped for a withdrawn permission is cancelled until the supervisor reports it ended. When cancelling
+    // fails, the CLI may still be talking to the provider: the kill switch freezes the agent's network and stops its
+    // computer, and only the owner's passkey releases it.
+    if (run.fence_reason === "ai_consent") {
+      try {
+        await this.supervisor.cancelRun(runId);
+      } catch (error) {
+        const kill = await this.computer.kill(run.agent_id);
+        this.log.error({ err: String(error), killErrors: kill.errors, runId }, "cancelling a run without consent failed; kill switch engaged");
+      }
+      return;
+    }
     if (Date.now() - run.fenced_at.getTime() > FENCE_GRACE_MS) {
       this.log.info({ runId }, "fenced run did not end its turn; stopping it");
       await this.supervisor.cancelRun(runId).catch(() => undefined);
@@ -626,21 +708,24 @@ export class TaskService {
     const run = await one<RunRow & { finalized: boolean; mcp_failed: boolean; final_result: ParsedResult | null }>(this.db, "select * from runs where id = $1", [runId]);
     if (run.finalized) return;
     const cancelledByOwner = run.fence_reason === "cancelled";
+    const stoppedWithoutConsent = run.fence_reason === "ai_consent";
     const stillActive = run.state === "running" || run.state === "starting";
     const finalState: Run["state"] = stillActive
-      ? cancelledByOwner || supervisorState === "cancelled" ? "cancelled" : supervisorState === "lost" ? "lost" : "exited"
+      ? cancelledByOwner || stoppedWithoutConsent || supervisorState === "cancelled" ? "cancelled" : supervisorState === "lost" ? "lost" : "exited"
       : run.state;
     const finalResult = result ?? run.final_result;
+    // A withdrawal can fence the run after the read above: the update reads the fence again, so the run ends as
+    // cancelled and the task stops instead of completing.
     const ended = await one<RunRow>(
       this.db,
-      `update runs set state = $2, exit_code = coalesce($3, exit_code), final_result = coalesce($4, final_result), token_revoked = true,
+      `update runs set state = case when fence_reason = 'ai_consent' and state in ('starting','running') then 'cancelled' else $2 end, exit_code = coalesce($3, exit_code), final_result = coalesce($4, final_result), token_revoked = true,
          ended_at = coalesce(ended_at, now()) where id = $1 returning *`,
       [runId, finalState, exitCode, finalResult ? JSON.stringify(finalResult) : null],
     );
     const task = await this.get(run.task_id);
     if (stillActive) {
       await this.events.append(this.db, task.id, { kind: "run", run: runView(ended) });
-      await this.audit.append(task.agent_id, "system", "run.exited", { runId, state: finalState, exitCode });
+      await this.audit.append(task.agent_id, "system", "run.exited", { runId, state: ended.state, exitCode });
     }
     const lease = await this.computer.lease(task.agent_id);
     if (lease.holder === "agent") await this.computer.setLease(task.agent_id, "paused", "system").catch(() => undefined);
@@ -648,6 +733,10 @@ export class TaskService {
 
     if (cancelledByOwner) {
       await this.finishTask(task, (await this.uncertainCount(task.id)) > 0 ? "outcome_unknown" : "cancelled", null, "Cancelled by the owner.");
+      return;
+    }
+    if (stoppedWithoutConsent || ended.fence_reason === "ai_consent") {
+      await this.finishTask(task, (await this.uncertainCount(task.id)) > 0 ? "outcome_unknown" : "cancelled", null, aiConsentStopped("withdrawn"));
       return;
     }
     if (TERMINAL_TASK_STATES.has(task.state)) {

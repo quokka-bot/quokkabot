@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AttachmentIds } from "./attachments.js";
+import { AiConsentView } from "./ai-consent.js";
 import { AuditEvent } from "./audit.js";
 import { ControlLease, OwnerFillRequest, OwnerFocusResult, ScreenSize } from "./browser.js";
 import { EgressDecision } from "./egress.js";
@@ -98,6 +99,8 @@ export const AgentSummary = z.object({
   computer: ComputerView,
   activeTaskId: TaskId.nullable(),
   waitingOnOwner: z.number().int(),
+  // Null from a server older than consent records.
+  aiConsent: AiConsentView.nullable().default(null),
 });
 export type AgentSummary = z.infer<typeof AgentSummary>;
 

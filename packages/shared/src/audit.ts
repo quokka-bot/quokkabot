@@ -18,6 +18,8 @@ export const AuditType = z.enum([
   "agent.added",
   "agent.removed",
   "agent.settings_changed",
+  "ai_consent.granted",
+  "ai_consent.withdrawn",
   "computer.started",
   "computer.stopped",
   "kill.engaged",
