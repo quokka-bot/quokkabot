@@ -80,9 +80,10 @@ export class DesktopAuth {
   private async poll(flow: Flow, kind: "signin" | "fresh", expires: number): Promise<void> {
     try {
       while (flow.result === null) {
-        if (Date.now() >= expires) { this.finish(flow, "expired"); return; }
-        await setTimeout(Math.min(this.pollInterval, expires - Date.now()), undefined, { signal: flow.controller.signal });
-        if (Date.now() >= expires) { this.finish(flow, "expired"); return; }
+        const remaining = expires - Date.now();
+        if (remaining <= 0) { this.finish(flow, "expired"); return; }
+        await setTimeout(Math.min(this.pollInterval, remaining), undefined, { signal: flow.controller.signal });
+        if (remaining <= this.pollInterval || Date.now() >= expires) { this.finish(flow, "expired"); return; }
         if (flow.pollToken === null) return;
         const response = await this.server.sessionFetch("/api/desktop-link/poll", {
           method: "POST", body: JSON.stringify({ pollToken: flow.pollToken }), signal: flow.controller.signal,
