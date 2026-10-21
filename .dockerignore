@@ -9,6 +9,7 @@
 private
 docs
 deploy
+apps/mobile
 **/.env
 **/.env.*
 .vscode
