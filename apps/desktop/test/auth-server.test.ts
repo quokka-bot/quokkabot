@@ -79,6 +79,19 @@ describe("desktop sign-in", () => {
     await auth.startSignIn();
     expect(await auth.waitForFlow()).toBe("expired");
   });
+  it("expires at the deadline when the timer fires before the clock reaches it", async () => {
+    const server = fakeServer([]);
+    const now = Date.now();
+    server.json.mockResolvedValueOnce({ ...startResponse(), expiresAt: new Date(now + 25).toISOString() });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const auth = new DesktopAuth(server, async () => undefined, async () => undefined, vi.fn(), 10000);
+      await auth.startSignIn();
+      expect(await auth.waitForFlow()).toBe("expired");
+    } finally {
+      clock.mockRestore();
+    }
+  });
   it("does not approve a flow when a late HTTP response arrives after cancellation", async () => {
     const server = fakeServer([]);
     let reply!: (response: Response) => void;
